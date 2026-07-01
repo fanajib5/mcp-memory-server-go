@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory_local_dev_password
+      POSTGRES_DB: memory
+    volumes:
+      - memory_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  mcp-memory:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgres://memory:memory_local_dev_password@db:5432/memory
+      MEMORY_API_TOKEN: local-dev-token-change-me
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+volumes:
+  memory_db_data:
