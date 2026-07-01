@@ -22,16 +22,17 @@ go mod tidy      # resolve & lock dependency versions
 go build ./...   # verifikasi kode compile
 ```
 
-> Catatan: project ini memakai `github.com/modelcontextprotocol/go-sdk` v1.0.0. SDK tersebut masih
-> aktif berkembang; jika di masa depan terdapat perubahan nama field antar minor versi, biasanya
-> hanya butuh penyesuaian kecil di `main.go` / `db.go`.
+> Catatan: project ini memakai `github.com/modelcontextprotocol/go-sdk` v1.0.0 (build terverifikasi
+> bersih dengan `go build ./...` + `go vet`). SDK tersebut masih aktif berkembang; jika di masa depan
+> terdapat perubahan nama field antar minor versi, biasanya hanya butuh penyesuaian kecil di
+> `main.go` / `db.go`.
 
 ## Isi project
 
 ```
 main.go            -> server setup, tool registration, HTTP + auth
 db.go              -> query layer ke PostgreSQL (pgx)
-schema.sql         -> skema entities / observations / relations, di-embed ke binary (go:embed), auto-migrasi saat start
+schema.sql         -> skema entities / observations / relations + lookup type, di-embed ke binary (go:embed), auto-migrasi saat start
 Dockerfile         -> multi-stage build -> distroless static image
 docker-compose.yml -> untuk test lokal (Postgres + server jadi satu)
 .env.example       -> template environment variables
@@ -39,14 +40,38 @@ docker-compose.yml -> untuk test lokal (Postgres + server jadi satu)
 
 ## Tools yang di-expose ke agent
 
-Enam tool, diekspos via MCP Streamable HTTP:
+Delapan tool, diekspos via MCP Streamable HTTP. Tool create/add/delete/search/read menerima parameter
+opsional `project` (default `"default"`) untuk mengisolasi graph per-project — lihat
+[Project isolation & validasi type](#project-isolation--validasi-type).
 
-- `memory_create_entities` — bikin entity baru (project, person, decision, tool, dll) + observasi awal; reuse entity kalau nama sudah ada
+- `memory_create_entities` — bikin entity baru + observasi awal; reuse entity kalau `(project, name)` sudah ada
 - `memory_add_observations` — tambah fakta ke entity; bikin entity-nya kalau belum ada
 - `memory_create_relations` — hubungkan entity, format `A --RELATION_TYPE--> B` (active voice, UPPER_SNAKE_CASE)
 - `memory_delete_entities` — hapus entity (cascade ke observasi & relasi)
 - `memory_search` — cari entity berdasarkan nama/isi observasi (pakai ini duluan, bukan read_graph)
-- `memory_read_graph` — dump seluruh graph (untuk debugging, hindari dipakai rutin karena berat)
+- `memory_read_graph` — dump graph satu project (atau semua project kalau `project` kosong); untuk debugging
+- `memory_export` — export graph (entities + relations) sebagai JSON terstruktur untuk backup/migrasi
+- `memory_import` — import JSON ke sebuah project; idempoten (skip yang sudah ada)
+
+## Project isolation & validasi type
+
+**Project isolation.** Setiap entity dimiliki satu `project_id` (default `"default"`), dan identitas
+entity adalah komposit `(project_id, name)` — nama yang sama boleh ada di project berbeda tanpa
+bentrok. Semua tool menerima `project` opsional; search/delete/read hanya menyentuh entity di project
+itu. Ini menjaga konteks antar-project tetap terpisah (konteks project A tidak akan nyangkut di hasil
+search project B). Client lama yang tidak mengirim `project` otomatis jatuh ke `"default"`, jadi
+tetap backward-compatible.
+
+**Validasi type.** Menjaga graph rapi supaya bisa diandalkan untuk query terstruktur:
+- `entity_type` harus merupakan type terdaftar di tabel lookup `memory_entity_types` (di-seed:
+  `project`, `person`, `decision`, `tool`, `concept`, `place`). Nilai tak terdaftar ditolak oleh
+  foreign key di Postgres. Menambah type baru = `INSERT` satu baris ke tabel lookup.
+- `relation_type` dinormalisasi otomatis ke `UPPER_SNAKE_CASE` (`"deployed via"` → `DEPLOYED_VIA`),
+  jadi variasi penulisan tidak menumpuk jadi type berbeda.
+
+**Backup & portabilitas.** `memory_export` + `memory_import` memakai format JSON terstruktur yang
+sama (round-trip lossless) — berguna untuk backup sebelum eksperimen skema, migrasi antar host, atau
+memindahkan data dari server memory lama.
 
 ## 1. Test lokal
 
@@ -142,10 +167,13 @@ di sana.
 
 ## Catatan pengembangan lanjutan
 
-- Tambah ekstensi `pgvector` + kolom embedding pada `memory_observations` untuk semantic search
-  (bukan hanya full-text match) — berguna jika volume observasi mencapai ribuan baris.
-- Tambah tabel `memory_projects` untuk isolasi data per-project/per-client (multi-tenant), supaya
-  konteks satu project tidak tercampur ke hasil search project lain.
+- Semantic search: tambahkan ekstensi `pgvector` + kolom embedding pada `memory_observations`. Search
+  saat ini hanya full-text match; semantic menangkap makna (mis. "pindah dari Redis" bisa menemukan
+  observasi yang menyebut "predis"). Butuh generate embedding tiap observasi baru.
+- Graph traversal multi-hop: tool `memory_find_path(from, to)` untuk menjelajah hubungan tidak
+  langsung begitu graph membesar.
+- Audit trail: kolom `source` / `session_id` di `memory_observations` untuk melacak agent atau sesi
+  mana yang menulis suatu fakta.
 - Transport saat ini `Stateless: true` per-request — cocok untuk beban ringan-menengah. Untuk trafik
   tinggi, dapat dioptimasi ke session-based transport dengan connection pooling yang lebih agresif.
 

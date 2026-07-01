@@ -1,15 +1,57 @@
 -- MCP Memory Server schema
 -- Knowledge graph: entities + observations + relations
+-- Idempotent: safe to re-run on every startup (EnsureSchema runs the whole file).
 
+-- ---- Lookup: registered entity types (feature #3) ----
+-- Seeded BEFORE the entities FK so 'concept' (the column default) always exists.
+CREATE TABLE IF NOT EXISTS memory_entity_types (
+    name TEXT PRIMARY KEY
+);
+INSERT INTO memory_entity_types (name) VALUES
+    ('project'), ('person'), ('decision'), ('tool'), ('concept'), ('place')
+ON CONFLICT (name) DO NOTHING;
+
+-- ---- Entities (feature #1: project_id isolation) ----
+-- Identity is the composite (project_id, name), so the same name can exist in
+-- different projects. Fresh installs get this shape from CREATE TABLE; existing
+-- installs (created by an older schema with a standalone name UNIQUE) are migrated
+-- by the idempotent ALTERs below.
 CREATE TABLE IF NOT EXISTS memory_entities (
     id           SERIAL PRIMARY KEY,
-    name         TEXT NOT NULL UNIQUE,
+    project_id   TEXT NOT NULL DEFAULT 'default',
+    name         TEXT NOT NULL,
     entity_type  TEXT NOT NULL DEFAULT 'concept',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    project_id   TEXT NOT NULL DEFAULT 'default'
+    CONSTRAINT uq_entities_project_name UNIQUE (project_id, name)
 );
 
+-- Migrations for installs created by an older schema (no-ops on a fresh table):
+ALTER TABLE memory_entities ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE memory_entities DROP CONSTRAINT IF EXISTS memory_entities_name_key;
+-- Add the composite UNIQUE only if missing (checking pg_constraint is more reliable
+-- than trapping duplicate_object, since ADD CONSTRAINT ... UNIQUE raises 42P07).
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_entities_project_name') THEN
+        ALTER TABLE memory_entities ADD CONSTRAINT uq_entities_project_name UNIQUE (project_id, name);
+    END IF;
+END $$;
+
+-- FK: entity_type must be a registered type. Added after seeding the lookup.
+-- (ON UPDATE CASCADE lets you rename a type; ON DELETE defaults to RESTRICT so a
+--  type in use cannot be dropped. Fails on existing rows with unregistered types —
+--  safe here because the project is pre-deployment with no data.)
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_entity_type') THEN
+        ALTER TABLE memory_entities
+            ADD CONSTRAINT fk_entity_type FOREIGN KEY (entity_type)
+            REFERENCES memory_entity_types(name) ON UPDATE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_entities_project ON memory_entities (project_id);
+
+-- ---- Observations ----
 CREATE TABLE IF NOT EXISTS memory_observations (
     id           SERIAL PRIMARY KEY,
     entity_id    INTEGER NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
@@ -17,6 +59,9 @@ CREATE TABLE IF NOT EXISTS memory_observations (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ---- Relations ----
+-- No project_id column: a relation's project is derived from its from/to entities.
+-- All queries therefore JOIN memory_entities to scope by project.
 CREATE TABLE IF NOT EXISTS memory_relations (
     id               SERIAL PRIMARY KEY,
     from_entity_id   INTEGER NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,

@@ -1,0 +1,7 @@
+.env
+
+# Local build artifact (the Dockerfile builds its own image)
+/mcp-memory-server
+
+# Serena (MCP) project data
+.serena/
