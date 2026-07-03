@@ -1,0 +1,47 @@
+{{define "entities"}}
+{{$p := .Project}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  <h1>Entities <small>(project: {{$p}})</small></h1>
+  <div class="filters">
+    <select name="type" hx-get="/ui/entities" hx-target="#rows" hx-trigger="change"
+            hx-include="[name='q']" hx-vals='{"p":"{{$p}}"}'>
+      <option value="">all types</option>
+      <option value="project"{{if eq .TypeFilter "project"}} selected{{end}}>project</option>
+      <option value="person"{{if eq .TypeFilter "person"}} selected{{end}}>person</option>
+      <option value="decision"{{if eq .TypeFilter "decision"}} selected{{end}}>decision</option>
+      <option value="tool"{{if eq .TypeFilter "tool"}} selected{{end}}>tool</option>
+      <option value="concept"{{if eq .TypeFilter "concept"}} selected{{end}}>concept</option>
+      <option value="place"{{if eq .TypeFilter "place"}} selected{{end}}>place</option>
+    </select>
+    <input name="q" type="search" placeholder="search name…" value="{{.Query}}"
+      hx-get="/ui/entities" hx-target="#rows" hx-trigger="keyup changed delay:300ms"
+      hx-include="[name='type']" hx-vals='{"p":"{{$p}}"}'>
+    <a href="/ui/entity?&p={{$p}}" class="btn">+ New entity</a>
+  </div>
+  <table class="grid">
+    <thead><tr><th>Name</th><th>Type</th><th>#obs</th><th>#rel</th></tr></thead>
+    <tbody id="rows">
+    {{template "entities_rows" .}}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "entities_rows"}}
+{{$p := .Project}}
+{{range .Rows}}
+<tr>
+  <td><a href="/ui/entity?name={{.Name | queryenc}}&p={{$p}}">{{.Name}}</a></td>
+  <td>{{.Type}}</td><td>{{.ObsCount}}</td><td>{{.RelCount}}</td>
+</tr>
+{{else}}
+<tr><td colspan="4"><em>no entities</em></td></tr>
+{{end}}
+{{end}}

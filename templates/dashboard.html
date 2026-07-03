@@ -1,0 +1,50 @@
+{{define "dashboard"}}
+{{$p := .Project}}
+{{$m := .Metrics}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  <h1>Dashboard <small>(project: {{$p}} — all: {{$m.AllEntities}}e / {{$m.AllObservations}}o)</small></h1>
+  <section class="cards">
+    <div class="card"><b>{{$m.Entities}}</b><span>entities</span></div>
+    <div class="card"><b>{{$m.Observations}}</b><span>observations</span></div>
+    <div class="card"><b>{{$m.Relations}}</b><span>relations</span></div>
+    <div class="card"><b>{{$m.RelationTypes}}</b><span>rel types</span></div>
+    <div class="card"><b>{{printf "%.1f" $m.AvgObs}}</b><span>avg obs/entity</span></div>
+    <div class="card"><b>{{printf "%.1f" $m.AvgRel}}</b><span>avg rel/entity</span></div>
+    <div class="card warn"><b>{{$m.Orphans}}</b><span>orphans</span></div>
+    <div class="card warn"><b>{{$m.Sparse}}</b><span>sparse (no obs)</span></div>
+  </section>
+  <section class="grid">
+    <div>
+      <h2>By type</h2>
+      <table>{{range $m.ByType}}<tr><td>{{.Type}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+    <div>
+      <h2>Top by observations</h2>
+      <table>{{range $m.TopByObs}}<tr><td><a href="/ui/entity?name={{.Name | queryenc}}&p={{$p}}">{{.Name}}</a></td><td>{{.ObsCount}}</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+    <div>
+      <h2>Top by relations (hubs)</h2>
+      <table>{{range $m.TopByRel}}<tr><td><a href="/ui/entity?name={{.Name | queryenc}}&p={{$p}}">{{.Name}}</a></td><td>{{.RelCount}}</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+    <div>
+      <h2>Relation types</h2>
+      <table>{{range $m.RelationTypesX}}<tr><td>{{.Type}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+    <div>
+      <h2>Recent entities</h2>
+      <table>{{range $m.RecentEntities}}<tr><td><a href="/ui/entity?name={{.Name | queryenc}}&p={{$p}}">{{.Name}}</a></td><td>{{.Type}}</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+    <div>
+      <h2>Growth (30d)</h2>
+      <table>{{range $m.Growth}}<tr><td>{{.Day}}</td><td>{{.Entities}}e / {{.Observations}}o</td></tr>{{else}}<tr><td><em>none</em></td></tr>{{end}}</table>
+    </div>
+  </section>
+</main>
+</body>
+</html>
+{{end}}

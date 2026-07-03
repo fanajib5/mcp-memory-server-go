@@ -1,0 +1,16 @@
+{{define "login"}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+<div class="login">
+  <h1>🧠 Memory Admin</h1>
+  <form method="post" action="/ui/login">
+    <input type="password" name="password" placeholder="password" autofocus required>
+    <button>Login</button>
+    {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+  </form>
+</div>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,104 @@
+{{define "entity"}}
+{{$p := .Project}}
+{{$d := .Detail}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  {{if $d}}
+  <h1>{{$d.Name}} <small>({{$d.Type}})</small></h1>
+
+  <details class="panel"><summary>Edit entity</summary>
+    <form method="post" action="/ui/entity/edit">
+      <input type="hidden" name="oldName" value="{{$d.Name}}">
+      <input type="hidden" name="p" value="{{$p}}">
+      <input name="newName" value="{{$d.Name}}">
+      <select name="type">
+        {{$t := $d.Type}}
+        {{range .Types}}<option value="{{.}}"{{if eq . $t}} selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      <button>Save</button>
+    </form>
+  </details>
+
+  <h2>Observations</h2>
+  <ul id="obs" class="obs">
+    {{template "observations" .}}
+  </ul>
+  <form method="post" action="/ui/observation" hx-target="#obs" hx-swap="innerHTML">
+    <input type="hidden" name="p" value="{{$p}}">
+    <input type="hidden" name="entity" value="{{$d.Name}}">
+    <input name="content" placeholder="new observation…" required>
+    <button>Add</button>
+  </form>
+
+  <h2>Relations</h2>
+  <ul id="rels" class="rels">
+    {{template "relations" .}}
+  </ul>
+  <form method="post" action="/ui/relation" hx-target="#rels" hx-swap="innerHTML">
+    <input type="hidden" name="p" value="{{$p}}">
+    <input type="hidden" name="from" value="{{$d.Name}}">
+    <input name="to" placeholder="target entity name" required>
+    <input name="type" placeholder="RELATION_TYPE" required>
+    <button>Add</button>
+  </form>
+
+  <details class="panel danger"><summary>Delete entity</summary>
+    <form method="post" action="/ui/entity/delete" onsubmit="return confirm('Delete {{$d.Name}} and all its data?')">
+      <input type="hidden" name="name" value="{{$d.Name}}">
+      <input type="hidden" name="p" value="{{$p}}">
+      <button class="danger">Delete permanently</button>
+    </form>
+  </details>
+
+  {{else}}
+  <h1>New entity <small>(project: {{$p}})</small></h1>
+  <form method="post" action="/ui/entity" class="panel">
+    <input type="hidden" name="p" value="{{$p}}">
+    <input name="name" placeholder="entity name" required>
+    <select name="type">{{range .Types}}<option value="{{.}}">{{.}}</option>{{end}}</select>
+    <textarea name="observations" placeholder="one observation per line"></textarea>
+    <button>Create</button>
+  </form>
+  {{end}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "observations"}}
+{{$p := $.Project}}
+{{range $.Detail.Observations}}
+<li>
+  <span>{{.Content}}</span>
+  <form method="post" action="/ui/observation/delete"
+        hx-target="#obs" hx-swap="innerHTML"
+        onsubmit="return confirm('Delete this observation?')">
+    <input type="hidden" name="p" value="{{$p}}">
+    <input type="hidden" name="entity" value="{{$.Detail.Name}}">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <button class="x">✕</button>
+  </form>
+</li>
+{{else}}<li><em>no observations</em></li>{{end}}
+{{end}}
+
+{{define "relations"}}
+{{$p := $.Project}}
+{{range $.Detail.Relations}}
+<li>
+  <span>{{if eq .Direction "out"}}→{{else}}←{{end}} <b>{{.Type}}</b> {{if eq .Direction "out"}}→{{else}}←{{end}}
+    <a href="/ui/entity?name={{.Other | queryenc}}&p={{$p}}">{{.Other}}</a></span>
+  <form method="post" action="/ui/relation/delete" hx-target="#rels" hx-swap="innerHTML"
+        onsubmit="return confirm('Delete this relation?')">
+    <input type="hidden" name="p" value="{{$p}}">
+    <input type="hidden" name="from" value="{{$.Detail.Name}}">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <button class="x">✕</button>
+  </form>
+</li>
+{{else}}<li><em>no relations</em></li>{{end}}
+{{end}}

@@ -1,0 +1,21 @@
+{{define "head"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js"></script>
+<title>Memory Admin</title>
+{{end}}
+
+{{define "nav"}}
+<nav class="topnav">
+  <a href="/ui" class="brand">🧠 Memory</a>
+  <a href="/ui/entities?p={{.Project}}">Entities</a>
+  <form method="post" action="/ui/project" class="proj">
+    <label>Project
+      <input name="project" value="{{.Project}}">
+    </label>
+    <button>Set</button>
+  </form>
+  <form method="post" action="/ui/logout"><button>Logout</button></form>
+</nav>
+{{end}}
