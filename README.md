@@ -115,13 +115,12 @@ npx @modelcontextprotocol/inspector
 3. Jika sudah ada instance Postgres di Coolify, cukup buat database baru di instance tersebut dan
    arahkan `DATABASE_URL` ke sana — tidak perlu Postgres terpisah kecuali ingin isolasi penuh.
 4. Set environment variables:
-- `DATABASE_URL` — connection string Postgres (gunakan internal network Coolify, bukan public)
-- `MEMORY_API_TOKEN` — generate dengan `openssl rand -hex 32` (fallback auth jika OAuth tidak diisi)
-- `JWT_SECRET` — secret untuk signing JWT opsional, default `MEMORY_API_TOKEN`
-- `OAUTH_CLIENT_ID` — client ID untuk OAuth 2.0 (untuk Claude.ai custom connector)
-- `OAUTH_CLIENT_SECRET` — client secret untuk OAuth 2.0 (untuk Claude.ai custom connector)
-- `PORT=3000`
-- `PUBLIC_URL` — URL publik server, misal `https://memory.example.com` (untuk OAuth metadata issuer)
+   - `DATABASE_URL` — connection string Postgres (gunakan internal network Coolify, bukan public)
+   - `MEMORY_API_TOKEN` — generate dengan `openssl rand -hex 32`
+   - `OAUTH_CLIENT_ID` — untuk Claude.ai custom connector
+   - `OAUTH_CLIENT_SECRET` — untuk Claude.ai custom connector
+   - `PUBLIC_URL=https://memory.najib.id` — **wajib di-set** agar OAuth metadata tidak fallback ke `0.0.0.0:3000`
+   - `PORT=3000`
 5. Set domain, misal `memory.example.com` — Coolify otomatis mengurus SSL (Let's Encrypt).
 6. Deploy, lalu pastikan `https://memory.example.com/health` membalas `{"status":"ok"}`.
 
@@ -131,6 +130,11 @@ npx @modelcontextprotocol/inspector
 - Batasi akses via firewall / IP allowlist Coolify jika IP client statis.
 - Atau tempatkan di belakang Tailscale/WireGuard untuk akses yang sepenuhnya privat.
 - Jangan commit file `.env` ke Git.
+
+### Troubleshooting OAuth redirect error
+Jika OAuth metadata menghasilkan URL seperti `https://0.0.0.0:3000`, itu berarti env `PUBLIC_URL`
+belum di-set. Isi `PUBLIC_URL=https://memory.najib.id` di Coolify, lalu redeploy. Jangan pakai
+`HOST=0.0.0.0` sebagai public URL — itu hanya bind address internal container.
 
 ## 3. Sambungkan dari Claude Code
 
