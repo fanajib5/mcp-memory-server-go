@@ -538,13 +538,14 @@ func main() {
 	publicURL := os.Getenv("PUBLIC_URL")
 	if publicURL == "" {
 		host := os.Getenv("HOST")
-		if host == "" {
+		if host == "" || host == "0.0.0.0" {
 			host = "localhost"
 		}
 		publicURL = "https://" + host
 		if port != "443" && port != "" {
 			publicURL += ":" + port
 		}
+		log.Printf("WARNING: PUBLIC_URL not set, defaulting to %s. Set PUBLIC_URL in Coolify/deploy so OAuth metadata uses your real public domain.", publicURL)
 	}
 
 	corsAllowedOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
