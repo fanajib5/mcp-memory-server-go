@@ -107,3 +107,45 @@ func TestProjectIsolationAndRoundTrip(t *testing.T) {
 		t.Fatalf("search after import = %+v, want X restored", restored)
 	}
 }
+
+// TestSearchAggregatesAcrossObservations locks in the fix for multi-word search:
+// the query's terms live in DIFFERENT observations of the same entity (and not in
+// its name). The old per-row `@@` match ANDed the terms within a single
+// observation, so it returned nothing here. The aggregated per-entity vector must
+// match.
+func TestSearchAggregatesAcrossObservations(t *testing.T) {
+	pool := integrationPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	if _, err := CreateEntities(ctx, pool, "default", []EntityInput{
+		{
+			Name:       "Toko Contoh",
+			EntityType: "project",
+			Observations: []string{
+				"sebuah proyek rintisan",
+				"bergerak di bidang bisnis kuliner",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Multi-word query whose words are spread across two separate observations.
+	hits, err := SearchMemory(ctx, pool, "default", "proyek bisnis", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Name != "Toko Contoh" {
+		t.Fatalf("search 'proyek bisnis' = %+v, want single hit 'Toko Contoh' (terms span observations)", hits)
+	}
+
+	// Single-token search still works.
+	hits2, err := SearchMemory(ctx, pool, "default", "kuliner", 10)
+	if err != nil {
+		t.Fatalf("search2: %v", err)
+	}
+	if len(hits2) != 1 || hits2[0].Name != "Toko Contoh" {
+		t.Fatalf("search 'kuliner' = %+v, want single hit 'Toko Contoh'", hits2)
+	}
+}

@@ -238,15 +238,25 @@ func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string
 	if limit <= 0 {
 		limit = 20
 	}
+	// Aggregate the entity's name + ALL its observations into a single tsvector
+	// before matching, so a multi-word query matches when its terms are spread
+	// across different observations. The previous per-row `@@` match ANDed the
+	// query terms within a single observation/name, so multi-word queries almost
+	// never matched. websearch_to_tsquery also tolerates punctuation and supports
+	// "quoted phrases", OR, and -exclusion. Results ranked by relevance.
 	rows, err := pool.Query(ctx, `
-		SELECT DISTINCT e.id, e.name, e.entity_type
-		FROM memory_entities e
-		LEFT JOIN memory_observations o ON o.entity_id = e.id
-		WHERE e.project_id = $1
-		  AND (
-		    to_tsvector('simple', e.name) @@ plainto_tsquery('simple', $2)
-		    OR to_tsvector('simple', coalesce(o.content, '')) @@ plainto_tsquery('simple', $2)
-		  )
+		SELECT id, name, entity_type
+		FROM (
+		  SELECT e.id, e.name, e.entity_type,
+		         to_tsvector('simple', e.name || ' ' || coalesce(string_agg(o.content, ' '), '')) AS vec
+		  FROM memory_entities e
+		  LEFT JOIN memory_observations o ON o.entity_id = e.id
+		  WHERE e.project_id = $1
+		  GROUP BY e.id, e.name, e.entity_type
+		) agg
+		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		WHERE agg.vec @@ q
+		ORDER BY ts_rank(agg.vec, q) DESC
 		LIMIT $3`, project, query, limit)
 	if err != nil {
 		return nil, err
