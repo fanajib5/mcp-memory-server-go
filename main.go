@@ -2,19 +2,121 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/joho/godotenv/autoload"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var pool *pgxpool.Pool
+var jwtSecret string
+
+type Claims struct {
+	jwt.RegisteredClaims
+	Scope string `json:"scope,omitempty"`
+}
+
+type OAuthMetadata struct {
+	Issuer                   string   `json:"issuer"`
+	AuthorizationEndpoint    string   `json:"authorization_endpoint"`
+	TokenEndpoint            string   `json:"token_endpoint"`
+	RegistrationEndpoint     string   `json:"registration_endpoint,omitempty"`
+	ScopesSupported          []string `json:"scopes_supported"`
+	ResponseTypesSupported   []string `json:"response_types_supported"`
+	GrantTypesSupported      []string `json:"grant_types_supported,omitempty"`
+	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+}
+
+func handleOAuthMetadata(baseURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metadata := OAuthMetadata{
+			Issuer:                   baseURL,
+			AuthorizationEndpoint:    baseURL + "/oauth/authorize",
+			TokenEndpoint:            baseURL + "/oauth/token",
+			RegistrationEndpoint:     baseURL + "/oauth/register",
+			ScopesSupported:          []string{"mcp"},
+			ResponseTypesSupported:   []string{"code"},
+			GrantTypesSupported:      []string{"client_credentials"},
+			TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metadata)
+	}
+}
+
+func handleRegister(w http.ResponseWriter, r *http.Request) {
+	clientID := r.FormValue("client_id")
+	clientSecret := r.FormValue("client_secret")
+
+	if clientID == "" || clientSecret == "" {
+		http.Error(w, "Missing client_id or client_secret", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{
+		"client_id": "` + clientID + `",
+		"client_secret": "` + clientSecret + `",
+		"grant_types": ["client_credentials"],
+		"token_endpoint_auth_method": "client_secret_post"
+	}`))
+}
+
+func handleToken(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	clientID := r.FormValue("client_id")
+	clientSecret := r.FormValue("client_secret")
+
+	if clientID == "" && r.Header.Get("Authorization") != "" {
+		auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Basic ")
+		if decoded, err := base64.StdEncoding.DecodeString(auth); err == nil {
+			parts := strings.SplitN(string(decoded), ":", 2)
+			if len(parts) == 2 {
+				clientID, clientSecret = parts[0], parts[1]
+			}
+		}
+	}
+
+	oauthClientID := os.Getenv("OAUTH_CLIENT_ID")
+	oauthClientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
+
+	if oauthClientID == "" || oauthClientSecret == "" {
+		oauthClientID = os.Getenv("MEMORY_API_TOKEN")
+		oauthClientSecret = os.Getenv("MEMORY_API_TOKEN")
+	}
+
+	if clientID != oauthClientID || clientSecret != oauthClientSecret {
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+		return
+	}
+
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   clientID,
+		},
+		Scope: "mcp",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"mcp"}`))
+}
 
 // ---- Tool input types (jsonschema tags give the LLM field descriptions) ----
 
@@ -201,12 +303,20 @@ func buildServer() *mcp.Server {
 	return server
 }
 
-func authMiddleware(token string, next http.Handler) http.Handler {
-	expected := []byte("Bearer " + token)
+func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, expected) != 1 {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
 			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		tokenStr := strings.TrimPrefix(auth, "Bearer ")
+		claims := &Claims{}
+		_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+			return []byte(jwtSecret), nil
+		})
+		if err != nil {
+			http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -221,12 +331,39 @@ func main() {
 		log.Fatal("FATAL: DATABASE_URL env var is required")
 	}
 	token := os.Getenv("MEMORY_API_TOKEN")
-	if token == "" {
-		log.Fatal("FATAL: MEMORY_API_TOKEN env var is required")
-	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3000"
+	}
+
+	oauthClientID := os.Getenv("OAUTH_CLIENT_ID")
+	oauthClientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
+	if oauthClientID == "" || oauthClientSecret == "" {
+		if token == "" {
+			log.Fatal("FATAL: Set OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET, or MEMORY_API_TOKEN as fallback")
+		}
+		oauthClientID = token
+		oauthClientSecret = token
+	}
+
+	jwtSecret = os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = token
+	}
+	if jwtSecret == "" {
+		log.Fatal("FATAL: JWT_SECRET env var is required")
+	}
+
+	publicURL := os.Getenv("PUBLIC_URL")
+	if publicURL == "" {
+		host := os.Getenv("HOST")
+		if host == "" {
+			host = "localhost"
+		}
+		publicURL = "https://" + host
+		if port != "443" && port != "" {
+			publicURL += ":" + port
+		}
 	}
 
 	var err error
@@ -247,7 +384,13 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", authMiddleware(token, handler))
+	mux.Handle("/mcp", authMiddleware(handler))
+	mux.HandleFunc("/.well-known/oauth-authorization-server", handleOAuthMetadata(publicURL))
+	mux.HandleFunc("/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Use client_credentials grant via /oauth/token", http.StatusBadRequest)
+	})
+	mux.HandleFunc("/oauth/token", handleToken)
+	mux.HandleFunc("/oauth/register", handleRegister)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

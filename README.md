@@ -77,7 +77,7 @@ memindahkan data dari server memory lama.
 
 ```bash
 cd mcp-memory-server-go
-cp .env.example .env      # isi MEMORY_API_TOKEN dengan token acak
+cp .env.example .env      # isi DATABASE_URL, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, dan JWT_SECRET
 docker compose up --build
 ```
 
@@ -87,10 +87,21 @@ curl http://localhost:3000/health
 # harus balas: {"status":"ok"}
 ```
 
+Cek OAuth metadata:
+```bash
+curl https://localhost:3000/.well-known/oauth-authorization-server
+```
+
+Ambil access token:
+```bash
+curl -X POST https://localhost:3000/oauth/token \
+  -d "client_id=myclient&client_secret=mysecret"
+```
+
 Uji MCP endpoint dengan MCP Inspector:
 ```bash
 npx @modelcontextprotocol/inspector
-# connect ke http://localhost:3000/mcp dengan header Authorization: Bearer local-dev-token-change-me
+# connect ke https://localhost:3000/mcp dengan header Authorization: Bearer <token dari /oauth/token>
 ```
 
 > Catatan: `docker-compose.yml` memetakan Postgres ke port host **5433** (bukan 5432) dan server ke
@@ -104,9 +115,13 @@ npx @modelcontextprotocol/inspector
 3. Jika sudah ada instance Postgres di Coolify, cukup buat database baru di instance tersebut dan
    arahkan `DATABASE_URL` ke sana — tidak perlu Postgres terpisah kecuali ingin isolasi penuh.
 4. Set environment variables:
-   - `DATABASE_URL` — connection string Postgres (gunakan internal network Coolify, bukan public)
-   - `MEMORY_API_TOKEN` — generate dengan `openssl rand -hex 32`
-   - `PORT=3000`
+- `DATABASE_URL` — connection string Postgres (gunakan internal network Coolify, bukan public)
+- `MEMORY_API_TOKEN` — generate dengan `openssl rand -hex 32` (fallback auth jika OAuth tidak diisi)
+- `JWT_SECRET` — secret untuk signing JWT opsional, default `MEMORY_API_TOKEN`
+- `OAUTH_CLIENT_ID` — client ID untuk OAuth 2.0 (untuk Claude.ai custom connector)
+- `OAUTH_CLIENT_SECRET` — client secret untuk OAuth 2.0 (untuk Claude.ai custom connector)
+- `PORT=3000`
+- `PUBLIC_URL` — URL publik server, misal `https://memory.example.com` (untuk OAuth metadata issuer)
 5. Set domain, misal `memory.example.com` — Coolify otomatis mengurus SSL (Let's Encrypt).
 6. Deploy, lalu pastikan `https://memory.example.com/health` membalas `{"status":"ok"}`.
 
@@ -156,6 +171,36 @@ Pola yang sama, pada `kilo.jsonc`:
 Karena transportnya MCP Streamable HTTP, server ini kompatibel dengan MCP client mana pun. Konfigurasi
 serupa dapat dipakai di setiap device — sumber data berada di server, sehingga seluruh device melihat
 memori yang sama.
+
+## 5. Sambungkan dari Claude.ai (Custom Connector)
+
+Server ini mendukung OAuth 2.0 client_credentials untuk Claude.ai custom connector. Isi form
+di Claude.ai dengan:
+
+- **Name**: `memory` (atau nama lain yang kamu suka)
+- **Remote mcp server url**: `https://memory.example.com/mcp`
+- **OAuth Client ID**: isi dengan value env `OAUTH_CLIENT_ID`
+- **OAuth Client Secret**: isi dengan value env `OAUTH_CLIENT_SECRET`
+
+Endpoint OAuth yang disediakan:
+
+- `/.well-known/oauth-authorization-server` — metadata server OAuth
+- `/oauth/token` — menukar client credentials menjadi JWT access token
+- `/oauth/register` — dynamic client registration (echo client_id/secret)
+
+Contoh env vars untuk Claude.ai:
+
+```env
+DATABASE_URL=postgres://user:pass@postgres:5432/memory
+OAUTH_CLIENT_ID=claude-ai-client
+OAUTH_CLIENT_SECRET=<openssl rand -hex 32>
+JWT_SECRET=<openssl rand -hex 32>
+PUBLIC_URL=https://memory.example.com
+PORT=3000
+```
+
+Catatan: `client_id` dan `client_secret` yang kamu daftarkan di Claude.ai harus sama persis dengan
+nilai `OAUTH_CLIENT_ID` dan `OAUTH_CLIENT_SECRET` di server.
 
 ## 5. Integrasi dengan instruksi agent
 
