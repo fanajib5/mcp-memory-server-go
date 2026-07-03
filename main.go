@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"log"
@@ -465,23 +466,41 @@ func corsMiddleware(allowedOrigins string, next http.Handler) http.Handler {
 	})
 }
 
-func authMiddleware(next http.Handler) http.Handler {
+// authMiddleware gates /mcp. It accepts EITHER:
+//  1. The raw static bearer token (MEMORY_API_TOKEN) — for MCP clients configured
+//     with a static headers.Authorization. This path never expires, which is what
+//     you want for "configure once per device" usage across laptops.
+//  2. A JWT issued via the OAuth flow (/oauth/token) — for clients that need OAuth,
+//     e.g. the claude.ai custom connector or browser-based clients.
+//
+// If expectedStaticToken is empty, the static path is disabled and only JWTs are
+// accepted (useful for deployments that rely solely on OAUTH_CLIENT_ID/SECRET).
+func authMiddleware(expectedStaticToken string, next http.Handler) http.Handler {
+	var expected []byte
+	if expectedStaticToken != "" {
+		expected = []byte("Bearer " + expectedStaticToken)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
 			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		tokenStr := strings.TrimPrefix(auth, "Bearer ")
-		claims := &Claims{}
-		_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
-			return []byte(jwtSecret), nil
-		})
-		if err != nil {
-			http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
+		// Path 1: static bearer token (constant-time compare, no expiry).
+		if len(expected) > 0 && subtle.ConstantTimeCompare([]byte(auth), expected) == 1 {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Path 2: JWT issued via the OAuth flow.
+		tokenStr := strings.TrimPrefix(auth, "Bearer ")
+		claims := &Claims{}
+		if _, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+			return []byte(jwtSecret), nil
+		}); err == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
 	})
 }
 
@@ -548,7 +567,7 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", authMiddleware(handler))
+	mux.Handle("/mcp", authMiddleware(token, handler))
 	mux.HandleFunc("/.well-known/oauth-authorization-server", handleOAuthMetadata(publicURL))
 	mux.HandleFunc("/oauth/authorize", handleOAuthAuthorize)
 	mux.HandleFunc("/oauth/token", handleToken)

@@ -331,7 +331,7 @@ func TestAuthMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", authMiddleware(inner))
+	mux.Handle("/mcp", authMiddleware("static-test-token", inner))
 	mux.Handle("/.well-known/oauth-authorization-server", handler)
 	mux.Handle("/oauth/token", handler)
 
@@ -357,6 +357,17 @@ func TestAuthMiddleware(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", w.Code)
+		}
+	})
+
+	t.Run("valid static token passes through", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
+		req.Header.Set("Authorization", "Bearer static-test-token")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (static bearer token should be accepted)", w.Code)
 		}
 	})
 
