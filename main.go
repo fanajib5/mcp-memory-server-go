@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -535,6 +536,13 @@ func main() {
 		log.Fatal("FATAL: JWT_SECRET env var is required")
 	}
 
+	// --- Web UI config ---
+	uiPassword = os.Getenv("UI_PASSWORD")
+	if uiPassword == "" {
+		uiPassword = token // fallback to MEMORY_API_TOKEN
+	}
+	cookieInsecure = os.Getenv("UI_COOKIE_INSECURE") == "true"
+
 	publicURL := os.Getenv("PUBLIC_URL")
 	if publicURL == "" {
 		host := os.Getenv("HOST")
@@ -578,6 +586,32 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// --- Web UI (fail-closed: routes only registered if a password is set) ---
+	initTemplates()
+	if uiPassword != "" {
+		staticSub, _ := fs.Sub(staticFS, "static")
+		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+		mux.HandleFunc("GET /ui/login", handleLogin)
+		mux.HandleFunc("POST /ui/login", handleLogin)
+		mux.Handle("POST /ui/logout", auth(handleLogout))
+		mux.Handle("POST /ui/project", auth(handleSetProject))
+		mux.Handle("/", auth(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/ui", http.StatusSeeOther)
+		}))
+		mux.Handle("GET /ui", auth(handleDashboard))
+		mux.Handle("GET /ui/entities", auth(handleEntities))
+		mux.Handle("GET /ui/entity", auth(handleEntityDetail))
+		mux.Handle("POST /ui/entity", auth(handleEntityCreate))
+		mux.Handle("POST /ui/entity/edit", auth(handleEntityUpdate))
+		mux.Handle("POST /ui/entity/delete", auth(handleEntityDelete))
+		mux.Handle("POST /ui/observation", auth(handleObservationAdd))
+		mux.Handle("POST /ui/observation/delete", auth(handleObservationDelete))
+		mux.Handle("POST /ui/relation", auth(handleRelationCreate))
+		mux.Handle("POST /ui/relation/delete", auth(handleRelationDelete))
+	} else {
+		log.Printf("WARNING: UI_PASSWORD and MEMORY_API_TOKEN both unset — web UI disabled (fail-closed)")
+	}
 
 	corsHandler := corsMiddleware(corsAllowedOrigins, mux)
 	log.Printf("mcp-memory-server listening on :%s", port)
