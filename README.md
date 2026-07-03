@@ -174,8 +174,9 @@ memori yang sama.
 
 ## 5. Sambungkan dari Claude.ai (Custom Connector)
 
-Server ini mendukung OAuth 2.0 client_credentials untuk Claude.ai custom connector. Isi form
-di Claude.ai dengan:
+Server ini mendukung OAuth 2.0 `authorization_code` untuk Claude.ai custom connector.
+
+Isi form di Claude.ai dengan:
 
 - **Name**: `memory` (atau nama lain yang kamu suka)
 - **Remote mcp server url**: `https://memory.example.com/mcp`
@@ -185,13 +186,22 @@ di Claude.ai dengan:
 Endpoint OAuth yang disediakan:
 
 - `/.well-known/oauth-authorization-server` — metadata server OAuth
-- `/oauth/token` — menukar client credentials menjadi JWT access token
-- `/oauth/register` — dynamic client registration (echo client_id/secret)
+- `/oauth/authorize` — authorization endpoint (auto-approve untuk personal use, return auth code + redirect)
+- `/oauth/token` — tukar `client_credentials` atau `authorization_code` menjadi JWT access token
+- `/oauth/register` — dynamic client registration (echo `client_id`/`client_secret`)
+
+Flow yang terjadi saat konek Claude.ai:
+
+1. Claude.ai meminta metadata OAuth dari `/.well-known/oauth-authorization-server`
+2. Claude.ai redirect ke `/oauth/authorize` dengan `client_id`, `redirect_uri`, `state`
+3. Server auto-approve dan redirect balik ke `redirect_uri` dengan `code` dan `state`
+4. Claude.ai tukar `code` menjadi JWT access token via `/oauth/token`
+5. Claude.ai pakai JWT tersebut di header `Authorization: Bearer <jwt>` ke `/mcp`
 
 Contoh env vars untuk Claude.ai:
 
 ```env
-DATABASE_URL=postgres://user:pass@postgres:5432/memory
+DATABASE_URL=postgres://user:pass@postgres:5432/memory?sslmode=require
 OAUTH_CLIENT_ID=claude-ai-client
 OAUTH_CLIENT_SECRET=<openssl rand -hex 32>
 JWT_SECRET=<openssl rand -hex 32>
@@ -202,7 +212,46 @@ PORT=3000
 Catatan: `client_id` dan `client_secret` yang kamu daftarkan di Claude.ai harus sama persis dengan
 nilai `OAUTH_CLIENT_ID` dan `OAUTH_CLIENT_SECRET` di server.
 
-## 5. Integrasi dengan instruksi agent
+## 6. Sambungkan dari Web Client (Browser)
+
+Server ini mendukung akses dari browser melalui MCP Streamable HTTP. Browser akan mengirim
+preflight `OPTIONS` request, jadi CORS harus diaktifkan.
+
+### Konfigurasi CORS
+
+Set environment variable:
+
+\```env
+CORS_ALLOWED_ORIGINS=https://your-web-app.example.com
+\```
+
+Atau `*` untuk mengizinkan semua origin (disarankan hanya untuk development):
+
+\```env
+CORS_ALLOWED_ORIGINS=*
+\```
+
+Jika `CORS_ALLOWED_ORIGINS` kosong, CORS headers tidak akan ditambahkan dan akses dari browser
+akan diblokir oleh same-origin policy.
+
+### Contoh koneksi dari web client
+
+Web client melakukan POST JSON ke `https://memory.example.com/mcp` dengan header:
+
+\```
+Authorization: Bearer <token dari /oauth/token>
+Content-Type: application/json
+Origin: https://your-web-app.example.com
+\```
+
+Response akan menyertakan CORS headers sehingga browser mengizinkan akses tersebut.
+
+### Catatan transport
+
+Server menggunakan mode JSON-only (`JSONResponse: true`). Setiap MCP request/resolve
+langsung melalui JSON, tanpa SSE streaming. Ini cukup untuk kebutuhan tool call dari browser.
+
+## 7. Integrasi dengan instruksi agent
 
 Nama tool mengikuti konvensi MCP knowledge-graph (`memory_*`), sehingga instruksi memori yang sudah
 ada pada `CLAUDE.md` / `AGENTS.md` umumnya dapat dipakai tanpa perubahan. Server ini fokus pada

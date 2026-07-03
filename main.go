@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,6 +20,19 @@ import (
 
 var pool *pgxpool.Pool
 var jwtSecret string
+
+type AuthCode struct {
+	Code        string
+	ClientID    string
+	RedirectURI string
+	ExpiresAt   time.Time
+	Scope       string
+}
+
+var (
+	authCodes      = make(map[string]*AuthCode)
+	authCodesMutex = &sync.Mutex{}
+)
 
 type Claims struct {
 	jwt.RegisteredClaims
@@ -70,8 +85,127 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}`))
 }
 
+func randomState(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
+	clientID := r.URL.Query().Get("client_id")
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	state := r.URL.Query().Get("state")
+	scope := r.URL.Query().Get("scope")
+	responseType := r.URL.Query().Get("response_type")
+
+	if responseType != "code" {
+		http.Error(w, `{"error":"unsupported_response_type"}`, http.StatusBadRequest)
+		return
+	}
+	if clientID == "" || redirectURI == "" {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
+
+	oauthClientID := os.Getenv("OAUTH_CLIENT_ID")
+	if oauthClientID == "" {
+		oauthClientID = os.Getenv("MEMORY_API_TOKEN")
+	}
+	if clientID != oauthClientID {
+		http.Error(w, `{"error":"invalid_client"}`, http.StatusBadRequest)
+		return
+	}
+
+	code := base64.RawURLEncoding.EncodeToString([]byte(randomState(32)))
+	authCodesMutex.Lock()
+	authCodes[code] = &AuthCode{
+		Code:        code,
+		ClientID:    clientID,
+		RedirectURI: redirectURI,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
+		Scope:       scope,
+	}
+	if authCodes[code].Scope == "" {
+		authCodes[code].Scope = "mcp"
+	}
+	authCodesMutex.Unlock()
+
+	redirectTarget := redirectURI + "?code=" + code
+	if state != "" {
+		redirectTarget += "&state=" + state
+	}
+	http.Redirect(w, r, redirectTarget, http.StatusFound)
+}
+
 func handleToken(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
+	grantType := r.FormValue("grant_type")
+
+	if grantType == "authorization_code" {
+		code := r.FormValue("code")
+		redirectURI := r.FormValue("redirect_uri")
+		clientID := r.FormValue("client_id")
+		clientSecret := r.FormValue("client_secret")
+
+		if clientID == "" && r.Header.Get("Authorization") != "" {
+			auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Basic ")
+			if decoded, err := base64.StdEncoding.DecodeString(auth); err == nil {
+				parts := strings.SplitN(string(decoded), ":", 2)
+				if len(parts) == 2 {
+					clientID, clientSecret = parts[0], parts[1]
+				}
+			}
+		}
+
+		authCodesMutex.Lock()
+		stored, ok := authCodes[code]
+		if ok {
+			delete(authCodes, code)
+		}
+		authCodesMutex.Unlock()
+
+		if !ok || stored == nil || stored.ExpiresAt.Before(time.Now()) {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		if redirectURI != "" && stored.RedirectURI != redirectURI {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+			return
+		}
+		oauthClientID := os.Getenv("OAUTH_CLIENT_ID")
+		if oauthClientID == "" {
+			oauthClientID = os.Getenv("MEMORY_API_TOKEN")
+		}
+		oauthClientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
+		if oauthClientSecret == "" {
+			oauthClientSecret = os.Getenv("MEMORY_API_TOKEN")
+		}
+		if clientID != oauthClientID || clientSecret != oauthClientSecret {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+
+		claims := Claims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(time.Now()),
+				Subject:   stored.ClientID,
+			},
+			Scope: stored.Scope,
+		}
+
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString([]byte(jwtSecret))
+		if err != nil {
+			http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"` + stored.Scope + `"}`))
+		return
+	}
+
 	clientID := r.FormValue("client_id")
 	clientSecret := r.FormValue("client_secret")
 
@@ -115,7 +249,7 @@ func handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"mcp"}`))
+	w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"mcp` + `"}`))
 }
 
 // ---- Tool input types (jsonschema tags give the LLM field descriptions) ----
@@ -303,6 +437,34 @@ func buildServer() *mcp.Server {
 	return server
 }
 
+func corsMiddleware(allowedOrigins string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && allowedOrigins != "" {
+			if allowedOrigins == "*" {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else {
+				allowed := strings.Split(allowedOrigins, ",")
+				for _, o := range allowed {
+					if strings.TrimSpace(o) == origin {
+						w.Header().Set("Access-Control-Allow-Origin", origin)
+						w.Header().Set("Vary", "Origin")
+						break
+					}
+				}
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -366,6 +528,8 @@ func main() {
 		}
 	}
 
+	corsAllowedOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
+
 	var err error
 	pool, err = pgxpool.New(ctx, dbURL)
 	if err != nil {
@@ -386,9 +550,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", authMiddleware(handler))
 	mux.HandleFunc("/.well-known/oauth-authorization-server", handleOAuthMetadata(publicURL))
-	mux.HandleFunc("/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Use client_credentials grant via /oauth/token", http.StatusBadRequest)
-	})
+	mux.HandleFunc("/oauth/authorize", handleOAuthAuthorize)
 	mux.HandleFunc("/oauth/token", handleToken)
 	mux.HandleFunc("/oauth/register", handleRegister)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -397,8 +559,9 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	corsHandler := corsMiddleware(corsAllowedOrigins, mux)
 	log.Printf("mcp-memory-server listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := http.ListenAndServe(":"+port, corsHandler); err != nil {
 		log.Fatal(err)
 	}
 }
