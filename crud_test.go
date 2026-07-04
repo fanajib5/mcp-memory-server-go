@@ -75,3 +75,58 @@ func TestCRUDOperations(t *testing.T) {
 		t.Fatal("cross-project observation delete must fail")
 	}
 }
+
+func TestEditByContentAndTriple(t *testing.T) {
+	pool := integrationPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	CreateEntities(ctx, pool, "editproj", []EntityInput{
+		{Name: "Delta", EntityType: "project", Observations: []string{"keep this", "drop this"}},
+		{Name: "Echo", EntityType: "concept"},
+	})
+	CreateRelations(ctx, pool, "editproj", []RelationInput{{From: "Delta", To: "Echo", RelationType: "uses"}})
+
+	if err := UpdateEntity(ctx, pool, "editproj", "Delta", "DeltaRenamed", "tool"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	if err := UpdateObservationByContent(ctx, pool, "editproj", "DeltaRenamed", "keep this", "kept this"); err != nil {
+		t.Fatalf("update obs: %v", err)
+	}
+	d, _ := GetEntityDetail(ctx, pool, "editproj", "DeltaRenamed")
+	seen := false
+	for _, o := range d.Observations {
+		if o.Content == "kept this" {
+			seen = true
+		}
+		if o.Content == "keep this" {
+			t.Fatal("old content still present after update")
+		}
+	}
+	if !seen {
+		t.Fatal("updated content missing")
+	}
+
+	if err := DeleteObservationByContent(ctx, pool, "editproj", "DeltaRenamed", "drop this"); err != nil {
+		t.Fatalf("delete obs: %v", err)
+	}
+	d2, _ := GetEntityDetail(ctx, pool, "editproj", "DeltaRenamed")
+	for _, o := range d2.Observations {
+		if o.Content == "drop this" {
+			t.Fatal("deleted content still present")
+		}
+	}
+
+	if err := DeleteRelationByTriple(ctx, pool, "editproj", "DeltaRenamed", "Echo", "uses"); err != nil {
+		t.Fatalf("delete rel: %v", err)
+	}
+	d3, _ := GetEntityDetail(ctx, pool, "editproj", "DeltaRenamed")
+	if len(d3.Relations) != 0 {
+		t.Fatalf("relation not deleted: %+v", d3.Relations)
+	}
+
+	if err := DeleteRelationByTriple(ctx, pool, "editproj", "DeltaRenamed", "Echo", "uses"); err == nil {
+		t.Fatal("expected error deleting absent relation")
+	}
+}

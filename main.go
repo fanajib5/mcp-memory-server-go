@@ -297,6 +297,33 @@ type ImportInput struct {
 	Relations []ExportRelation `json:"relations,omitempty" jsonschema:"Relations to import"`
 }
 
+type RenameEntityInput struct {
+	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	OldName    string `json:"oldName" jsonschema:"Current entity name"`
+	NewName    string `json:"newName" jsonschema:"New entity name"`
+	EntityType string `json:"entityType,omitempty" jsonschema:"Optional new type: project, person, decision, tool, concept, place"`
+}
+
+type UpdateObservationInput struct {
+	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	EntityName string `json:"entityName" jsonschema:"Entity the observation belongs to"`
+	OldContent string `json:"oldContent" jsonschema:"Exact current observation text to match"`
+	NewContent string `json:"newContent" jsonschema:"Replacement text"`
+}
+
+type DeleteObservationInput struct {
+	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	EntityName string `json:"entityName"`
+	Content    string `json:"content" jsonschema:"Exact observation text to delete"`
+}
+
+type DeleteRelationInput struct {
+	Project      string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	RelationType string `json:"relationType" jsonschema:"Active voice, UPPER_SNAKE_CASE, e.g. DEPLOYED_VIA"`
+}
+
 func textResult(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}
 }
@@ -391,6 +418,34 @@ func handleImport(ctx context.Context, req *mcp.CallToolRequest, in ImportInput)
 	return jsonResult(res), nil, nil
 }
 
+func handleRenameEntity(ctx context.Context, req *mcp.CallToolRequest, in RenameEntityInput) (*mcp.CallToolResult, any, error) {
+	if err := UpdateEntity(ctx, pool, in.Project, in.OldName, in.NewName, in.EntityType); err != nil {
+		return textResult("error: " + err.Error()), nil, nil
+	}
+	return textResult("Renamed/updated entity: " + in.OldName + " -> " + in.NewName), nil, nil
+}
+
+func handleUpdateObservation(ctx context.Context, req *mcp.CallToolRequest, in UpdateObservationInput) (*mcp.CallToolResult, any, error) {
+	if err := UpdateObservationByContent(ctx, pool, in.Project, in.EntityName, in.OldContent, in.NewContent); err != nil {
+		return textResult("error: " + err.Error()), nil, nil
+	}
+	return textResult("Updated observation on " + in.EntityName), nil, nil
+}
+
+func handleDeleteObservation(ctx context.Context, req *mcp.CallToolRequest, in DeleteObservationInput) (*mcp.CallToolResult, any, error) {
+	if err := DeleteObservationByContent(ctx, pool, in.Project, in.EntityName, in.Content); err != nil {
+		return textResult("error: " + err.Error()), nil, nil
+	}
+	return textResult("Deleted observation from " + in.EntityName), nil, nil
+}
+
+func handleDeleteRelation(ctx context.Context, req *mcp.CallToolRequest, in DeleteRelationInput) (*mcp.CallToolResult, any, error) {
+	if err := DeleteRelationByTriple(ctx, pool, in.Project, in.From, in.To, in.RelationType); err != nil {
+		return textResult("error: " + err.Error()), nil, nil
+	}
+	return textResult("Deleted relation " + in.From + " --" + in.RelationType + "--> " + in.To), nil, nil
+}
+
 // ---- Server wiring ----
 
 func buildServer() *mcp.Server {
@@ -435,6 +490,26 @@ func buildServer() *mcp.Server {
 		Name:        "memory_import",
 		Description: "Import entities + relations from structured JSON into a project. Idempotent (skips existing entities/relations). Useful for restoring a backup or migrating data.",
 	}, handleImport)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "memory_rename_entity",
+		Description: "Rename and/or change the type of an entity. Use this to fix entity name typos (e.g. Sabgya -> Sabagya). Rejects a rename if the new name already exists in the project.",
+	}, handleRenameEntity)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "memory_update_observation",
+		Description: "Edit an observation's text by matching its exact current content within an entity. Provide the verbatim old text (as returned by memory_search/read_graph) and the new text.",
+	}, handleUpdateObservation)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "memory_delete_observation",
+		Description: "Delete one observation by matching its exact content within an entity. Prefer this over deleting the whole entity when only one fact is wrong.",
+	}, handleDeleteObservation)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "memory_delete_relation",
+		Description: "Delete a relation by its from/to/relationType triple (relationType normalized to UPPER_SNAKE_CASE).",
+	}, handleDeleteRelation)
 
 	return server
 }
