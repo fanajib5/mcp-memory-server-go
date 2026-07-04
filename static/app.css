@@ -38,7 +38,7 @@ button.x:hover{color:#f66}
 .login form{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .login input{padding:8px;background:#161a21;color:var(--fg);border:1px solid var(--line);border-radius:4px}
 .err{color:#f88}
-#network{height:72vh;border:1px solid var(--line);border-radius:8px;background:#0b0d12}
+#network{height:calc(100vh - 170px);min-height:60vh;border:1px solid var(--line);border-radius:8px;background:#0b0d12}
 .muted{color:var(--muted);font-size:13px}
 .warn{color:var(--warn)}
 .ok{color:#6f6}
