@@ -4,7 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	cryptorand "crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +23,7 @@ var (
 const (
 	sessionCookieName = "mem_session"
 	projectCookieName = "mem_project"
+	csrfCookieName    = "mem_csrf"
 	sessionMaxAge     = 30 * 24 * 3600
 )
 
@@ -65,6 +68,61 @@ func sessionAuth(next http.Handler) http.Handler {
 // auth wraps a HandlerFunc with sessionAuth.
 func auth(h http.HandlerFunc) http.Handler { return sessionAuth(h) }
 
+// generateCSRFToken returns a random hex token for double-submit CSRF.
+func generateCSRFToken() string {
+	b := make([]byte, 32)
+	if _, err := cryptorand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano()) // extremely unlikely fallback
+	}
+	return hex.EncodeToString(b)
+}
+
+func csrfToken(r *http.Request) string {
+	if c, err := r.Cookie(csrfCookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// csrfCheck enforces double-submit CSRF: the mem_csrf cookie must equal the form "csrf" field.
+func csrfCheck(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(csrfCookieName)
+		if err != nil || c.Value == "" {
+			http.Error(w, "csrf: missing token", http.StatusForbidden)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(c.Value)) != 1 {
+			http.Error(w, "csrf: mismatch", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// csrfAuth wraps a mutating HandlerFunc with session + CSRF checks.
+func csrfAuth(h http.HandlerFunc) http.Handler { return sessionAuth(csrfCheck(h)) }
+
+// renderUI renders a full page, injecting the CSRF token into the data map.
+func renderUI(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
+	if data != nil {
+		data["CSRF"] = csrfToken(r)
+	}
+	render(w, page, data)
+}
+
+// renderUIFragment renders a fragment, injecting the CSRF token into the data map.
+func renderUIFragment(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	if data != nil {
+		data["CSRF"] = csrfToken(r)
+	}
+	renderFragment(w, name, data)
+}
+
 func activeProject(r *http.Request) string {
 	if c, err := r.Cookie(projectCookieName); err == nil {
 		if v := strings.TrimSpace(c.Value); v != "" {
@@ -92,12 +150,21 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path: "/ui", MaxAge: sessionMaxAge,
 		HttpOnly: true, Secure: !cookieInsecure, SameSite: http.SameSiteLaxMode,
 	})
+	http.SetCookie(w, &http.Cookie{
+		Name: csrfCookieName, Value: generateCSRFToken(),
+		Path: "/ui", MaxAge: sessionMaxAge,
+		HttpOnly: true, Secure: !cookieInsecure, SameSite: http.SameSiteLaxMode,
+	})
 	http.Redirect(w, r, "/ui", http.StatusSeeOther)
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/ui", MaxAge: -1,
+		HttpOnly: true, Secure: !cookieInsecure, SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: csrfCookieName, Value: "", Path: "/ui", MaxAge: -1,
 		HttpOnly: true, Secure: !cookieInsecure, SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
@@ -112,7 +179,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, "dashboard", map[string]any{"Project": p, "Metrics": m})
+	renderUI(w, r, "dashboard", map[string]any{"Project": p, "Metrics": m})
 }
 
 func handleEntities(w http.ResponseWriter, r *http.Request) {
@@ -129,10 +196,10 @@ func handleEntities(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{"Project": p, "TypeFilter": tf, "Query": q, "Rows": rows}
 	if r.Header.Get("HX-Request") == "true" {
-		renderFragment(w, "entities_rows", data)
+		renderUIFragment(w, r, "entities_rows", data)
 		return
 	}
-	render(w, "entities", data)
+	renderUI(w, r, "entities", data)
 }
 
 func handleEntityDetail(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +214,7 @@ func handleEntityDetail(w http.ResponseWriter, r *http.Request) {
 			detail = d
 		}
 	}
-	render(w, "entity", map[string]any{"Project": p, "Detail": detail, "Types": entityTypes})
+	renderUI(w, r, "entity", map[string]any{"Project": p, "Detail": detail, "Types": entityTypes})
 }
 
 func handleEntityCreate(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +344,7 @@ func renderObsOrRel(w http.ResponseWriter, r *http.Request, frag string) {
 	if d, err := GetEntityDetail(r.Context(), pool, p, name); err == nil {
 		detail = d
 	}
-	renderFragment(w, frag, map[string]any{"Project": p, "Detail": detail})
+	renderUIFragment(w, r, frag, map[string]any{"Project": p, "Detail": detail})
 }
 
 func handleGraph(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +352,7 @@ func handleGraph(w http.ResponseWriter, r *http.Request) {
 	if p == "" {
 		p = activeProject(r)
 	}
-	render(w, "graph", map[string]any{"Project": p})
+	renderUI(w, r, "graph", map[string]any{"Project": p})
 }
 
 func handleGraphJSON(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +382,7 @@ func handleObservationEditGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "observation not found", http.StatusNotFound)
 		return
 	}
-	renderFragment(w, "observation_edit", map[string]any{"Project": p, "ID": id, "Content": content, "Entity": entity})
+	renderUIFragment(w, r, "observation_edit", map[string]any{"Project": p, "ID": id, "Content": content, "Entity": entity})
 }
 
 // handleObservationEditSave updates one observation by id and returns the refreshed list.
@@ -347,7 +414,7 @@ func handleObservationRow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "observation not found", http.StatusNotFound)
 		return
 	}
-	renderFragment(w, "observation_row", map[string]any{
+	renderUIFragment(w, r, "observation_row", map[string]any{
 		"Project": p, "Entity": entity, "Obs": EntityDetailObservation{ID: id, Content: content},
 	})
 }

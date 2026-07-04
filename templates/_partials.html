@@ -6,17 +6,20 @@
 <title>Memory Admin</title>
 {{end}}
 
+{{define "csrf_field"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
+
 {{define "nav"}}
 <nav class="topnav">
   <a href="/ui" class="brand">🧠 Memory</a>
   <a href="/ui/entities?p={{.Project}}">Entities</a>
   <a href="/ui/graph?p={{.Project}}">Graph</a>
   <form method="post" action="/ui/project" class="proj">
+    {{template "csrf_field" .}}
     <label>Project
       <input name="project" value="{{.Project}}">
     </label>
     <button>Set</button>
   </form>
-  <form method="post" action="/ui/logout"><button>Logout</button></form>
+  <form method="post" action="/ui/logout">{{template "csrf_field" .}}<button>Logout</button></form>
 </nav>
 {{end}}

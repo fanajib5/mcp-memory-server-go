@@ -12,6 +12,7 @@
 
   <details class="panel"><summary>Edit entity</summary>
     <form method="post" action="/ui/entity/edit">
+      {{template "csrf_field" .}}
       <input type="hidden" name="oldName" value="{{$d.Name}}">
       <input type="hidden" name="p" value="{{$p}}">
       <input name="newName" value="{{$d.Name}}">
@@ -28,6 +29,7 @@
     {{template "observations" .}}
   </ul>
   <form method="post" action="/ui/observation" hx-target="#obs" hx-swap="innerHTML">
+    {{template "csrf_field" .}}
     <input type="hidden" name="p" value="{{$p}}">
     <input type="hidden" name="entity" value="{{$d.Name}}">
     <input name="content" placeholder="new observation…" required>
@@ -39,6 +41,7 @@
     {{template "relations" .}}
   </ul>
   <form method="post" action="/ui/relation" hx-target="#rels" hx-swap="innerHTML">
+    {{template "csrf_field" .}}
     <input type="hidden" name="p" value="{{$p}}">
     <input type="hidden" name="from" value="{{$d.Name}}">
     <input name="to" placeholder="target entity name" required>
@@ -48,6 +51,7 @@
 
   <details class="panel danger"><summary>Delete entity</summary>
     <form method="post" action="/ui/entity/delete" onsubmit="return confirm('Delete {{$d.Name}} and all its data?')">
+      {{template "csrf_field" .}}
       <input type="hidden" name="name" value="{{$d.Name}}">
       <input type="hidden" name="p" value="{{$p}}">
       <button class="danger">Delete permanently</button>
@@ -57,6 +61,7 @@
   {{else}}
   <h1>New entity <small>(project: {{$p}})</small></h1>
   <form method="post" action="/ui/entity" class="panel">
+    {{template "csrf_field" .}}
     <input type="hidden" name="p" value="{{$p}}">
     <input name="name" placeholder="entity name" required>
     <select name="type">{{range .Types}}<option value="{{.}}">{{.}}</option>{{end}}</select>
@@ -73,7 +78,7 @@
 {{$p := $.Project}}
 {{$name := $.Detail.Name}}
 {{range $.Detail.Observations}}
-{{template "observation_row" (dict "Project" $p "Entity" $name "Obs" .)}}
+{{template "observation_row" (dict "Project" $p "Entity" $name "Obs" . "CSRF" $.CSRF)}}
 {{else}}<li><em>no observations</em></li>{{end}}
 {{end}}
 
@@ -86,6 +91,7 @@
             hx-target="#obs-{{.Obs.ID}}" hx-swap="outerHTML">✎</button>
     <form method="post" action="/ui/observation/delete" hx-target="#obs" hx-swap="innerHTML"
           onsubmit="return confirm('Delete this observation?')">
+      {{template "csrf_field" .}}
       <input type="hidden" name="p" value="{{.Project}}">
       <input type="hidden" name="entity" value="{{.Entity}}">
       <input type="hidden" name="id" value="{{.Obs.ID}}">
@@ -98,6 +104,7 @@
 {{define "observation_edit"}}
 <li id="obs-{{.ID}}">
   <form method="post" action="/ui/observation/edit" hx-target="#obs" hx-swap="innerHTML" class="inlineedit">
+    {{template "csrf_field" .}}
     <input type="hidden" name="p" value="{{.Project}}">
     <input type="hidden" name="entity" value="{{.Entity}}">
     <input type="hidden" name="id" value="{{.ID}}">
@@ -118,6 +125,7 @@
     <a href="/ui/entity?name={{.Other | queryenc}}&p={{$p}}">{{.Other}}</a></span>
   <form method="post" action="/ui/relation/delete" hx-target="#rels" hx-swap="innerHTML"
         onsubmit="return confirm('Delete this relation?')">
+    {{template "csrf_field" $}}
     <input type="hidden" name="p" value="{{$p}}">
     <input type="hidden" name="from" value="{{$.Detail.Name}}">
     <input type="hidden" name="id" value="{{.ID}}">
