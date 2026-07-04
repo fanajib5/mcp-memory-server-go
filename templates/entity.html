@@ -71,19 +71,43 @@
 
 {{define "observations"}}
 {{$p := $.Project}}
+{{$name := $.Detail.Name}}
 {{range $.Detail.Observations}}
-<li>
-  <span>{{.Content}}</span>
-  <form method="post" action="/ui/observation/delete"
-        hx-target="#obs" hx-swap="innerHTML"
-        onsubmit="return confirm('Delete this observation?')">
-    <input type="hidden" name="p" value="{{$p}}">
-    <input type="hidden" name="entity" value="{{$.Detail.Name}}">
+{{template "observation_row" (dict "Project" $p "Entity" $name "Obs" .)}}
+{{else}}<li><em>no observations</em></li>{{end}}
+{{end}}
+
+{{define "observation_row"}}
+<li id="obs-{{.Obs.ID}}">
+  <span>{{.Obs.Content}}</span>
+  <span class="rowbtns">
+    <button class="x" type="button" title="Edit"
+            hx-get="/ui/observation/edit?id={{.Obs.ID}}&p={{.Project}}"
+            hx-target="#obs-{{.Obs.ID}}" hx-swap="outerHTML">✎</button>
+    <form method="post" action="/ui/observation/delete" hx-target="#obs" hx-swap="innerHTML"
+          onsubmit="return confirm('Delete this observation?')">
+      <input type="hidden" name="p" value="{{.Project}}">
+      <input type="hidden" name="entity" value="{{.Entity}}">
+      <input type="hidden" name="id" value="{{.Obs.ID}}">
+      <button class="x" title="Delete">✕</button>
+    </form>
+  </span>
+</li>
+{{end}}
+
+{{define "observation_edit"}}
+<li id="obs-{{.ID}}">
+  <form method="post" action="/ui/observation/edit" hx-target="#obs" hx-swap="innerHTML" class="inlineedit">
+    <input type="hidden" name="p" value="{{.Project}}">
+    <input type="hidden" name="entity" value="{{.Entity}}">
     <input type="hidden" name="id" value="{{.ID}}">
-    <button class="x">✕</button>
+    <input name="content" value="{{.Content}}" required>
+    <button>Save</button>
+    <button class="x" type="button" title="Cancel"
+            hx-get="/ui/observation/row?id={{.ID}}&p={{.Project}}"
+            hx-target="#obs-{{.ID}}" hx-swap="outerHTML">✕</button>
   </form>
 </li>
-{{else}}<li><em>no observations</em></li>{{end}}
 {{end}}
 
 {{define "relations"}}

@@ -392,3 +392,14 @@ func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphP
 
 	return g, nil
 }
+
+// ObservationByID returns one observation's content and its entity name, scoped to project.
+func ObservationByID(ctx context.Context, pool *pgxpool.Pool, project string, id int) (content, entityName string, err error) {
+	project = defaultProject(project)
+	err = pool.QueryRow(ctx, `
+		SELECT o.content, e.name FROM memory_observations o
+		JOIN memory_entities e ON e.id = o.entity_id
+		WHERE e.project_id = $1 AND o.id = $2`, project, id,
+	).Scan(&content, &entityName)
+	return
+}

@@ -28,6 +28,9 @@ td,th{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;font-s
 .panel.danger{border-color:#5a2a2a}
 .obs,.rels{list-style:none;padding:0;margin:8px 0}
 .obs li,.rels li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.rowbtns{display:inline-flex;gap:2px}
+.inlineedit{display:flex;gap:6px;width:100%;align-items:center}
+.inlineedit input[name=content]{flex:1;background:#0f1115;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:5px}
 .obs li span,.rels li span{flex:1}
 button.x{padding:2px 7px;background:transparent;border:none;color:var(--muted)}
 button.x:hover{color:#f66}

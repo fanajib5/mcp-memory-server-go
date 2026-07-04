@@ -684,6 +684,9 @@ func main() {
 		mux.Handle("POST /ui/entity/delete", auth(handleEntityDelete))
 		mux.Handle("POST /ui/observation", auth(handleObservationAdd))
 		mux.Handle("POST /ui/observation/delete", auth(handleObservationDelete))
+		mux.Handle("GET /ui/observation/edit", auth(handleObservationEditGet))
+		mux.Handle("POST /ui/observation/edit", auth(handleObservationEditSave))
+		mux.Handle("GET /ui/observation/row", auth(handleObservationRow))
 		mux.Handle("POST /ui/relation", auth(handleRelationCreate))
 		mux.Handle("POST /ui/relation/delete", auth(handleRelationDelete))
 	} else {

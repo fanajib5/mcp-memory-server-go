@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -25,6 +26,20 @@ func initTemplates() {
 		},
 		"queryenc": func(s string) string {
 			return url.QueryEscape(s)
+		},
+		"dict": func(values ...any) (map[string]any, error) {
+			if len(values)%2 != 0 {
+				return nil, fmt.Errorf("dict: odd number of args")
+			}
+			m := make(map[string]any, len(values)/2)
+			for i := 0; i < len(values); i += 2 {
+				k, ok := values[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict: key %d not string", i)
+				}
+				m[k] = values[i+1]
+			}
+			return m, nil
 		},
 	}).ParseFS(templateFS, "templates/*.html"))
 }

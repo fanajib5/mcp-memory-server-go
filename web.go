@@ -301,3 +301,53 @@ func handleGraphJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(g)
 }
+
+// handleObservationEditGet returns an inline edit form for one observation.
+func handleObservationEditGet(w http.ResponseWriter, r *http.Request) {
+	var id int
+	fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
+	p := r.URL.Query().Get("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	content, entity, err := ObservationByID(r.Context(), pool, p, id)
+	if err != nil {
+		http.Error(w, "observation not found", http.StatusNotFound)
+		return
+	}
+	renderFragment(w, "observation_edit", map[string]any{"Project": p, "ID": id, "Content": content, "Entity": entity})
+}
+
+// handleObservationEditSave updates one observation by id and returns the refreshed list.
+func handleObservationEditSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var id int
+	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	p := r.FormValue("p")
+	if err := UpdateObservation(r.Context(), pool, p, id, r.FormValue("content")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	renderObsOrRel(w, r, "observations")
+}
+
+// handleObservationRow returns the read-only row for one observation (cancel-edit target).
+func handleObservationRow(w http.ResponseWriter, r *http.Request) {
+	var id int
+	fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
+	p := r.URL.Query().Get("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	content, entity, err := ObservationByID(r.Context(), pool, p, id)
+	if err != nil {
+		http.Error(w, "observation not found", http.StatusNotFound)
+		return
+	}
+	renderFragment(w, "observation_row", map[string]any{
+		"Project": p, "Entity": entity, "Obs": EntityDetailObservation{ID: id, Content: content},
+	})
+}
