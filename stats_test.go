@@ -65,3 +65,29 @@ func TestStatsQueries(t *testing.T) {
 		t.Fatalf("topByObs = %+v", m.TopByObs)
 	}
 }
+
+func TestGraphData(t *testing.T) {
+	pool := integrationPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	CreateEntities(ctx, pool, "graphproj", []EntityInput{
+		{Name: "A", EntityType: "project"},
+		{Name: "B", EntityType: "tool"},
+	})
+	CreateRelations(ctx, pool, "graphproj", []RelationInput{{From: "A", To: "B", RelationType: "uses"}})
+
+	g, err := GraphData(ctx, pool, "graphproj")
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	if len(g.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(g.Nodes))
+	}
+	if g.Nodes[0].ID == 0 {
+		t.Fatal("node ID not populated")
+	}
+	if len(g.Edges) != 1 || g.Edges[0].From == 0 || g.Edges[0].Label != "USES" {
+		t.Fatalf("edges = %+v", g.Edges)
+	}
+}

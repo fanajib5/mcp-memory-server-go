@@ -676,6 +676,8 @@ func main() {
 		}))
 		mux.Handle("GET /ui", auth(handleDashboard))
 		mux.Handle("GET /ui/entities", auth(handleEntities))
+		mux.Handle("GET /ui/graph", auth(handleGraph))
+		mux.Handle("GET /ui/graph.json", auth(handleGraphJSON))
 		mux.Handle("GET /ui/entity", auth(handleEntityDetail))
 		mux.Handle("POST /ui/entity", auth(handleEntityCreate))
 		mux.Handle("POST /ui/entity/edit", auth(handleEntityUpdate))

@@ -336,3 +336,59 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 
 	return m, nil
 }
+
+type GraphNode struct {
+	ID    int    `json:"id"`
+	Label string `json:"label"`
+	Group string `json:"group"` // entity_type, drives vis-network node color
+}
+
+type GraphEdge struct {
+	From  int    `json:"from"`
+	To    int    `json:"to"`
+	Label string `json:"label"` // relation_type
+}
+
+type GraphPayload struct {
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
+}
+
+// GraphData returns nodes (entities) and edges (relations) for visualization.
+func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphPayload, error) {
+	project = defaultProject(project)
+	g := &GraphPayload{}
+
+	rows, err := pool.Query(ctx, `SELECT id, name, entity_type FROM memory_entities WHERE project_id = $1 ORDER BY name`, project)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var n GraphNode
+		if err := rows.Scan(&n.ID, &n.Label, &n.Group); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		g.Nodes = append(g.Nodes, n)
+	}
+	rows.Close()
+
+	rrows, err := pool.Query(ctx, `
+		SELECT r.from_entity_id, r.to_entity_id, r.relation_type FROM memory_relations r
+		JOIN memory_entities fe ON fe.id = r.from_entity_id
+		WHERE fe.project_id = $1`, project)
+	if err != nil {
+		return nil, err
+	}
+	for rrows.Next() {
+		var e GraphEdge
+		if err := rrows.Scan(&e.From, &e.To, &e.Label); err != nil {
+			rrows.Close()
+			return nil, err
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	rrows.Close()
+
+	return g, nil
+}

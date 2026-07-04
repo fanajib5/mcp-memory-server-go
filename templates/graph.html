@@ -1,0 +1,38 @@
+{{define "graph"}}
+{{$p := .Project}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  <h1>Graph <small>(project: {{$p}})</small></h1>
+  <p class="muted">Klik ganda sebuah node untuk membuka entity. Warna node = type.</p>
+  <div id="network"></div>
+</main>
+<script src="/static/vis-network.min.js"></script>
+<script>
+fetch("/ui/graph.json?p={{$p}}").then(r => r.json()).then(data => {
+  const nodes = new vis.DataSet((data.nodes || []).map(n => ({ id: n.id, label: n.label, group: n.group })));
+  const edges = new vis.DataSet((data.edges || []).map(e => ({ from: e.from, to: e.to, label: e.label, arrows: "to" })));
+  const network = new vis.Network(document.getElementById("network"), { nodes: nodes, edges: edges }, {
+    groups: {
+      person: { color: "#e88" }, project: { color: "#4f8cff" }, decision: { color: "#f55" },
+      tool: { color: "#5fb88f" }, concept: { color: "#a86" }, place: { color: "#fa3" }
+    },
+    nodes: { shape: "dot", size: 16, font: { color: "#fff", size: 13 } },
+    edges: { font: { size: 11, color: "#9aa" }, color: { color: "#555", highlight: "#4f8cff" },
+             arrows: { to: { enabled: true, scaleFactor: 0.5 } }, smooth: { type: "continuous" } },
+    interaction: { hover: true, navigationButtons: false }
+  });
+  network.on("doubleClick", function (e) {
+    if (e.nodes.length) {
+      var n = data.nodes.find(function (x) { return x.id === e.nodes[0]; });
+      if (n) { location.href = "/ui/entity?name=" + encodeURIComponent(n.label) + "&p={{$p}}"; }
+    }
+  });
+});
+</script>
+</body>
+</html>
+{{end}}

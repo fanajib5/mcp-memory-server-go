@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -277,4 +278,26 @@ func renderObsOrRel(w http.ResponseWriter, r *http.Request, frag string) {
 		detail = d
 	}
 	renderFragment(w, frag, map[string]any{"Project": p, "Detail": detail})
+}
+
+func handleGraph(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	render(w, "graph", map[string]any{"Project": p})
+}
+
+func handleGraphJSON(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	g, err := GraphData(r.Context(), pool, p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(g)
 }
