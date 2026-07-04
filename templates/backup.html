@@ -1,0 +1,33 @@
+{{define "backup"}}
+{{$p := .Project}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  <h1>Backup <small>(project: {{$p}})</small></h1>
+
+  <section class="panel">
+    <h2>Export</h2>
+    <p class="muted">Download seluruh graph project ini (entities + observations + relations) sebagai JSON.</p>
+    <a class="btn" href="/ui/export?p={{$p}}">⬇ Download JSON</a>
+  </section>
+
+  <section class="panel">
+    <h2>Import</h2>
+    <p class="muted warn">⚠ Import MENAMBAH data. Entity & relasi yang sudah ada di-skip (idempotent), tapi observation pada entity existing akan di-append — bisa dobel. Backup dulu sebelum import ke project penting.</p>
+    <form method="post" action="/ui/import" enctype="multipart/form-data">
+      {{template "csrf_field" .}}
+      <input type="hidden" name="p" value="{{$p}}">
+      <input type="file" name="file" accept="application/json,.json" required>
+      <button>Upload &amp; Import</button>
+    </form>
+    {{if .Imported}}
+    <p class="ok">✓ Import selesai: {{.Imported.EntitiesCreated}} entity baru, {{.Imported.RelationsCreated}} relasi baru.</p>
+    {{end}}
+  </section>
+</main>
+</body>
+</html>
+{{end}}

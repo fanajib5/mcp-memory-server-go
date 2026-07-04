@@ -40,3 +40,5 @@ button.x:hover{color:#f66}
 .err{color:#f88}
 #network{height:72vh;border:1px solid var(--line);border-radius:8px;background:#0b0d12}
 .muted{color:var(--muted);font-size:13px}
+.warn{color:var(--warn)}
+.ok{color:#6f6}

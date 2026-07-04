@@ -92,9 +92,16 @@ func csrfCheck(next http.Handler) http.Handler {
 			http.Error(w, "csrf: missing token", http.StatusForbidden)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad form", http.StatusBadRequest)
-			return
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				http.Error(w, "bad multipart: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		} else {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "bad form", http.StatusBadRequest)
+				return
+			}
 		}
 		if subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(c.Value)) != 1 {
 			http.Error(w, "csrf: mismatch", http.StatusForbidden)
@@ -417,4 +424,48 @@ func handleObservationRow(w http.ResponseWriter, r *http.Request) {
 	renderUIFragment(w, r, "observation_row", map[string]any{
 		"Project": p, "Entity": entity, "Obs": EntityDetailObservation{ID: id, Content: content},
 	})
+}
+
+func handleBackup(w http.ResponseWriter, r *http.Request) {
+	p := activeProject(r)
+	renderUI(w, r, "backup", map[string]any{"Project": p})
+}
+
+func handleBackupExport(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	payload, err := ExportGraph(r.Context(), pool, p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="memory-`+p+`.json"`)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(payload)
+}
+
+func handleBackupImport(w http.ResponseWriter, r *http.Request) {
+	p := r.FormValue("p")
+	if p == "" {
+		p = activeProject(r)
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "no file: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	var payload ExportPayload
+	if err := json.NewDecoder(file).Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	res, err := ImportGraph(r.Context(), pool, p, &payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	renderUI(w, r, "backup", map[string]any{"Project": p, "Imported": res})
 }
