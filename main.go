@@ -61,7 +61,7 @@ func handleOAuthMetadata(baseURL string) http.HandlerFunc {
 			RegistrationEndpoint:     baseURL + "/oauth/register",
 			ScopesSupported:          []string{"mcp"},
 			ResponseTypesSupported:   []string{"code"},
-			GrantTypesSupported:      []string{"client_credentials"},
+			GrantTypesSupported:      []string{"authorization_code", "client_credentials"},
 			TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post"},
 		}
 		w.Header().Set("Content-Type", "application/json")
