@@ -36,7 +36,7 @@ func uiTestHarness(t *testing.T) *UI {
 	tmpl := MustParseTemplates()
 	return &UI{
 		Cfg:     cfg,
-		UC:      usecase.NewMemoryUseCase(repository.NewMemoryRepository(pool), nil),
+		UC:      usecase.NewMemoryUseCase(repository.NewMemoryRepository(pool), nil, nil),
 		SU:      usecase.NewStatsUseCase(repository.NewStatsRepository(pool)),
 		Tmpl:    tmpl,
 		Session: NewSession(cfg),

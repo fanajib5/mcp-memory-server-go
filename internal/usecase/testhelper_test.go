@@ -46,7 +46,7 @@ func newTestHarnessWithEmbedder(t *testing.T, emb gateway.Embedder) *testHarness
 		t.Fatalf("clean history: %v", err)
 	}
 	return &testHarness{
-		mem:   NewMemoryUseCase(repository.NewMemoryRepository(pool), emb),
+		mem:   NewMemoryUseCase(repository.NewMemoryRepository(pool), emb, nil),
 		stats: NewStatsUseCase(repository.NewStatsRepository(pool)),
 		pool:  pool,
 	}
