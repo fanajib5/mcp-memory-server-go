@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build, vet, unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download deps
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests (no DB required)
+        run: go test ./... -count=1
+
+      - name: Gofmt check
+        run: |
+          unformatted=$(gofmt -l internal/ cmd/)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  integration-test:
+    name: Integration tests (pgvector)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: memory
+          POSTGRES_PASSWORD: memory_ci_password
+          POSTGRES_DB: memory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U memory"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download deps
+        run: go mod download
+
+      - name: Integration tests (sequential, -p 1 to avoid cross-package DB race)
+        env:
+          DATABASE_URL: postgres://memory:memory_ci_password@localhost:5432/memory
+        run: go test ./... -count=1 -p 1 -v
