@@ -68,5 +68,10 @@ func BuildServer(h *Handlers) *mcpgo.Server {
 		Description: "Delete a relation by its from/to/relationType triple (relationType normalized to UPPER_SNAKE_CASE).",
 	}, h.handleDeleteRelation)
 
+	mcpgo.AddTool(server, &mcpgo.Tool{
+		Name:        "memory_get_history",
+		Description: "Retrieve the change history (audit trail) for one entity — observation edits, deletes, and entity renames/type changes.",
+	}, h.handleGetHistory)
+
 	return server
 }

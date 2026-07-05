@@ -222,3 +222,8 @@ func (u *MemoryUseCase) DeleteRelationByTriple(ctx context.Context, project, fro
 	}
 	return u.repo.DeleteRelationByTriple(ctx, project, from, to, relType)
 }
+
+// GetHistory returns the audit trail for one entity within a project.
+func (u *MemoryUseCase) GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error) {
+	return u.repo.GetHistory(ctx, defaultProject(project), entityName, limit)
+}

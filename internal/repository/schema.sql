@@ -116,3 +116,18 @@ ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS embedding vector(768);
 CREATE INDEX IF NOT EXISTS idx_observations_embedding
     ON memory_observations USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
+
+-- ---- Observation Versioning ----
+-- Append-only audit trail. Populated by repo methods (application-level, in tx).
+CREATE TABLE IF NOT EXISTS memory_history (
+    id BIGSERIAL PRIMARY KEY,
+    entity_id INT,
+    entity_name TEXT NOT NULL,
+    observation_id INT,
+    action TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    confidence REAL,
+    happened_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_history_entity ON memory_history (entity_name, happened_at DESC);

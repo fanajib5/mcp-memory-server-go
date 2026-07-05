@@ -46,6 +46,7 @@ type MemoryRepository interface {
 	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64, newEmbedding []float32) error
 	DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error
 	TouchAccessed(ctx context.Context, entityIDs []int) error
+	GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error)
 }
 
 // postgresMemory is the pgx-backed MemoryRepository.
@@ -366,6 +367,34 @@ func (r *postgresMemory) TouchAccessed(ctx context.Context, entityIDs []int) err
 	return err
 }
 
+// GetHistory returns audit-trail entries for one entity (scoping by project via
+// the entity_name which is unique per project).
+func (r *postgresMemory) GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT h.id, h.entity_name, h.action, h.old_value, h.new_value, h.confidence,
+		       to_char(h.happened_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM memory_history h
+		WHERE h.entity_name = $1
+		ORDER BY h.happened_at DESC
+		LIMIT $2`, entityName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []entity.HistoryEntry
+	for rows.Next() {
+		var h entity.HistoryEntry
+		if err := rows.Scan(&h.ID, &h.EntityName, &h.Action, &h.OldValue, &h.NewValue, &h.Confidence, &h.HappenedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
 // ReadGraph returns the graph for one project, or all projects when project == "".
 func (r *postgresMemory) ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error) {
 	entQuery := `SELECT id, name, entity_type FROM memory_entities ORDER BY name`
@@ -613,9 +642,10 @@ func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, new
 	defer tx.Rollback(ctx)
 
 	var id int
+	var oldType string
 	err = tx.QueryRow(ctx,
-		`SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, oldName,
-	).Scan(&id)
+		`SELECT id, entity_type FROM memory_entities WHERE project_id = $1 AND name = $2`, project, oldName,
+	).Scan(&id, &oldType)
 	if err != nil {
 		return fmt.Errorf("entity %q not found in project %q: %w", oldName, project, err)
 	}
@@ -636,47 +666,103 @@ func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, new
 	); err != nil {
 		return err
 	}
+
+	// History: capture rename and/or type change. entity_name = current (post-mutation) name
+	// so GetHistory (queried by current name) finds both events.
+	if newName != oldName {
+		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, 'entity_renamed', $3, $4)`,
+			id, newName, oldName, newName)
+	}
+	if entityType != oldType {
+		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, 'entity_type_changed', $3, $4)`,
+			id, newName, oldType, entityType)
+	}
+
 	return tx.Commit(ctx)
 }
 
 func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, id int) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM memory_observations o
-		USING memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, project, id)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("observation not found in project %q", project)
+	defer tx.Rollback(ctx)
+
+	// Read old content + entity name before delete (for history).
+	var entityID int
+	var entityName, oldContent string
+	err = tx.QueryRow(ctx, `
+		SELECT o.entity_id, e.name, o.content FROM memory_observations o
+		JOIN memory_entities e ON e.id = o.entity_id
+		WHERE e.project_id = $1 AND o.id = $2`, project, id,
+	).Scan(&entityID, &entityName, &oldContent)
+	if err != nil {
+		return fmt.Errorf("observation not found in project %q: %w", project, err)
 	}
-	return nil
+
+	if _, err := tx.Exec(ctx, `DELETE FROM memory_observations WHERE id = $1`, id); err != nil {
+		return err
+	}
+
+	tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, 'observation_deleted', $4)`,
+		entityID, entityName, id, oldContent)
+
+	return tx.Commit(ctx)
 }
 
 func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64, newEmbedding []float32) error {
-	confExpr := "o.confidence"
-	embExpr := "o.embedding"
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Read old content + entity for history.
+	var entityID int
+	var entityName, oldContent string
+	err = tx.QueryRow(ctx, `
+		SELECT o.entity_id, e.name, o.content FROM memory_observations o
+		JOIN memory_entities e ON e.id = o.entity_id
+		WHERE e.project_id = $1 AND o.id = $2`, project, id,
+	).Scan(&entityID, &entityName, &oldContent)
+	if err != nil {
+		return fmt.Errorf("observation not found in project %q: %w", project, err)
+	}
+
+	confExpr := "confidence"
+	embExpr := "embedding"
+	setClauses := "content = $3"
 	var args []any
-	args = append(args, project, id, content)
+	args = append(args, id, project, content)
 	if newConfidence != nil {
 		confExpr = fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
+		setClauses += ", confidence = " + confExpr
 	}
 	if newEmbedding != nil {
 		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
 		args = append(args, vecLiteral(newEmbedding))
+		setClauses += ", embedding = " + embExpr
 	}
-	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
-		UPDATE memory_observations o SET content = $3, confidence = %s, embedding = %s
+
+	tag, err := tx.Exec(ctx, fmt.Sprintf(`
+		UPDATE memory_observations SET %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, confExpr, embExpr), args...)
+		WHERE memory_observations.entity_id = e.id AND e.project_id = $2 AND memory_observations.id = $1`, setClauses), args...)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("observation not found in project %q", project)
 	}
-	return nil
+
+	// History: capture content change.
+	if oldContent != content {
+		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, 'observation_updated', $4, $5)`,
+			entityID, entityName, id, oldContent, content)
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (r *postgresMemory) DeleteRelation(ctx context.Context, project string, id int) error {
@@ -694,44 +780,78 @@ func (r *postgresMemory) DeleteRelation(ctx context.Context, project string, id 
 }
 
 func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project, entityName, content string) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM memory_observations o
-		USING memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`,
-		project, entityName, content)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+
+	var entityID, obsID int
+	err = tx.QueryRow(ctx, `
+		SELECT o.entity_id, o.id FROM memory_observations o
+		JOIN memory_entities e ON e.id = o.entity_id
+		WHERE e.project_id = $1 AND e.name = $2 AND o.content = $3`,
+		project, entityName, content).Scan(&entityID, &obsID)
+	if err != nil {
 		return fmt.Errorf("observation %q not found on entity %q in project %q", content, entityName, project)
 	}
-	return nil
+
+	if _, err := tx.Exec(ctx, `DELETE FROM memory_observations WHERE id = $1`, obsID); err != nil {
+		return err
+	}
+
+	tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, 'observation_deleted', $4)`,
+		entityID, entityName, obsID, content)
+
+	return tx.Commit(ctx)
 }
 
 func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64, newEmbedding []float32) error {
-	confExpr := "o.confidence"
-	embExpr := "o.embedding"
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var entityID, obsID int
+	err = tx.QueryRow(ctx, `
+		SELECT o.entity_id, o.id FROM memory_observations o
+		JOIN memory_entities e ON e.id = o.entity_id
+		WHERE e.project_id = $1 AND e.name = $2 AND o.content = $3`,
+		project, entityName, oldContent).Scan(&entityID, &obsID)
+	if err != nil {
+		return fmt.Errorf("observation %q not found on entity %q in project %q", oldContent, entityName, project)
+	}
+
+	confExpr := "confidence"
+	embExpr := "embedding"
+	setClauses := "content = $3"
 	var args []any
-	args = append(args, project, entityName, oldContent, newContent)
+	args = append(args, obsID, project, newContent)
 	if newConfidence != nil {
 		confExpr = fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
+		setClauses += ", confidence = " + confExpr
 	}
 	if newEmbedding != nil {
 		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
 		args = append(args, vecLiteral(newEmbedding))
+		setClauses += ", embedding = " + embExpr
 	}
-	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
-		UPDATE memory_observations o SET content = $4, confidence = %s, embedding = %s
+
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`
+		UPDATE memory_observations SET %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`, confExpr, embExpr), args...)
-	if err != nil {
+		WHERE memory_observations.entity_id = e.id AND e.project_id = $2 AND memory_observations.id = $1`, setClauses), args...); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("observation %q not found on entity %q in project %q", oldContent, entityName, project)
+
+	if oldContent != newContent {
+		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, 'observation_updated', $4, $5)`,
+			entityID, entityName, obsID, oldContent, newContent)
 	}
-	return nil
+
+	return tx.Commit(ctx)
 }
 
 func (r *postgresMemory) DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error {

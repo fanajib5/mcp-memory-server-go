@@ -52,6 +52,7 @@ func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService,
 		mux.Handle("GET /ui/observation/row", ui.Session.Auth(ui.HandleObservationRow))
 		mux.Handle("POST /ui/relation", ui.Session.CSRFAuth(ui.HandleRelationCreate))
 		mux.Handle("POST /ui/relation/delete", ui.Session.CSRFAuth(ui.HandleRelationDelete))
+		mux.Handle("GET /ui/history", ui.Session.Auth(ui.HandleHistory))
 	}
 
 	return corsMiddleware(cfg.CORSAllowedOrigins, mux)

@@ -74,3 +74,9 @@ type DeleteRelationInput struct {
 	To           string `json:"to"`
 	RelationType string `json:"relationType" jsonschema:"Active voice, UPPER_SNAKE_CASE, e.g. DEPLOYED_VIA"`
 }
+
+type GetHistoryInput struct {
+	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	EntityName string `json:"entityName" jsonschema:"Entity to retrieve the change history for"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"Max entries, default 50"`
+}
