@@ -3,36 +3,89 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"mcp-memory-server/internal/entity"
+	"mcp-memory-server/internal/gateway"
 	"mcp-memory-server/internal/repository"
 )
+
+// embedTimeout caps how long a single embed call may take. If the embedder is
+// slow or down, the usecase stores the observation without an embedding and
+// continues — semantic search is best-effort, not blocking.
+const embedTimeout = 5 * time.Second
+
+// clampConfidence forces a confidence value into [0.0, 1.0].
+func clampConfidence(c float64) float64 {
+	if c < 0 {
+		return 0
+	}
+	if c > 1 {
+		return 1
+	}
+	return c
+}
+
+// clampConfidences applies clampConfidence to every value in place; returns the
+// same slice. A nil/empty slice means "no confidence provided" (all neutral).
+func clampConfidences(c []float64) []float64 {
+	for i := range c {
+		c[i] = clampConfidence(c[i])
+	}
+	return c
+}
 
 // MemoryUseCase applies domain rules (project/entity/relation normalization,
 // validation, defaults) before delegating to the repository. It is the seam
 // where future cross-cutting memory features (decay scoring, confidence,
 // versioning) will hook in without touching SQL.
 type MemoryUseCase struct {
-	repo repository.MemoryRepository
+	repo     repository.MemoryRepository
+	embedder gateway.Embedder // nil = semantic search off
 }
 
-// NewMemoryUseCase wires a usecase to its repository.
-func NewMemoryUseCase(repo repository.MemoryRepository) *MemoryUseCase {
-	return &MemoryUseCase{repo: repo}
+// NewMemoryUseCase wires a usecase to its repository. Pass nil for embedder to
+// disable semantic features (lexical-only mode).
+func NewMemoryUseCase(repo repository.MemoryRepository, embedder gateway.Embedder) *MemoryUseCase {
+	return &MemoryUseCase{repo: repo, embedder: embedder}
+}
+
+// embedTexts is a fail-safe wrapper: embeds texts with a timeout. On any error
+// (timeout, network, Ollama down), returns nil vectors and logs a warning so
+// the write/search proceeds in lexical-only mode.
+func (u *MemoryUseCase) embedTexts(ctx context.Context, texts []string) [][]float32 {
+	if u.embedder == nil || len(texts) == 0 {
+		return nil
+	}
+	embCtx, cancel := context.WithTimeout(ctx, embedTimeout)
+	defer cancel()
+	vecs, err := u.embedder.Embed(embCtx, texts)
+	if err != nil {
+		log.Printf("embed failed (non-fatal, semantic off for this op): %v", err)
+		return nil
+	}
+	return vecs
 }
 
 func (u *MemoryUseCase) CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error) {
 	project = defaultProject(project)
 	for i := range entities {
 		entities[i].Type = normalizeEntityType(entities[i].Type)
+		entities[i].Confidences = clampConfidences(entities[i].Confidences)
+		// Embed new observations for semantic search (fail-safe: nil on error).
+		if len(entities[i].Observations) > 0 {
+			entities[i].Embeddings = u.embedTexts(ctx, entities[i].Observations)
+		}
 	}
 	return u.repo.CreateEntities(ctx, project, entities)
 }
 
-func (u *MemoryUseCase) AddObservations(ctx context.Context, project, entityName string, observations []string) error {
+func (u *MemoryUseCase) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error {
 	project = defaultProject(project)
-	return u.repo.AddObservations(ctx, project, entityName, observations)
+	embeddings := u.embedTexts(ctx, observations)
+	return u.repo.AddObservations(ctx, project, entityName, observations, clampConfidences(confidences), embeddings)
 }
 
 func (u *MemoryUseCase) CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error) {
@@ -51,12 +104,30 @@ func (u *MemoryUseCase) DeleteEntities(ctx context.Context, project string, name
 	return u.repo.DeleteEntities(ctx, project, names)
 }
 
+// Search runs the query, then best-effort bumps last_accessed_at for every
+// matched entity (retrieval = access). A touch failure is logged, not fatal,
+// so a search never fails due to access-tracking.
 func (u *MemoryUseCase) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error) {
 	project = defaultProject(project)
 	if limit <= 0 {
 		limit = 20
 	}
-	return u.repo.Search(ctx, project, query, limit)
+	// Best-effort query embedding for semantic fusion (nil = lexical-only).
+	queryVec := u.embedTexts(ctx, []string{query})
+	var vec []float32
+	if len(queryVec) > 0 {
+		vec = queryVec[0]
+	}
+	results, ids, err := u.repo.Search(ctx, project, query, limit, vec)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 {
+		if terr := u.repo.TouchAccessed(ctx, ids); terr != nil {
+			log.Printf("search: touch last_accessed_at failed (non-fatal): %v", terr)
+		}
+	}
+	return results, nil
 }
 
 // ReadGraph keeps project=="" to mean "all projects" (intentionally not defaulted).
@@ -97,12 +168,22 @@ func (u *MemoryUseCase) DeleteObservation(ctx context.Context, project string, i
 	return u.repo.DeleteObservation(ctx, project, id)
 }
 
-func (u *MemoryUseCase) UpdateObservation(ctx context.Context, project string, id int, content string) error {
+func (u *MemoryUseCase) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error {
 	project = defaultProject(project)
 	if strings.TrimSpace(content) == "" {
 		return fmt.Errorf("observation content is required")
 	}
-	return u.repo.UpdateObservation(ctx, project, id, content)
+	var conf *float64
+	if newConfidence != nil {
+		c := clampConfidence(*newConfidence)
+		conf = &c
+	}
+	emb := u.embedTexts(ctx, []string{content})
+	var vec []float32
+	if len(emb) > 0 {
+		vec = emb[0]
+	}
+	return u.repo.UpdateObservation(ctx, project, id, content, conf, vec)
 }
 
 func (u *MemoryUseCase) DeleteRelation(ctx context.Context, project string, id int) error {
@@ -115,12 +196,22 @@ func (u *MemoryUseCase) DeleteObservationByContent(ctx context.Context, project,
 	return u.repo.DeleteObservationByContent(ctx, project, entityName, content)
 }
 
-func (u *MemoryUseCase) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string) error {
+func (u *MemoryUseCase) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error {
 	project = defaultProject(project)
 	if strings.TrimSpace(newContent) == "" {
 		return fmt.Errorf("new content is required")
 	}
-	return u.repo.UpdateObservationByContent(ctx, project, entityName, oldContent, newContent)
+	var conf *float64
+	if newConfidence != nil {
+		c := clampConfidence(*newConfidence)
+		conf = &c
+	}
+	emb := u.embedTexts(ctx, []string{newContent})
+	var vec []float32
+	if len(emb) > 0 {
+		vec = emb[0]
+	}
+	return u.repo.UpdateObservationByContent(ctx, project, entityName, oldContent, newContent, conf, vec)
 }
 
 func (u *MemoryUseCase) DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error {

@@ -42,7 +42,7 @@ func TestCRUDOperations(t *testing.T) {
 		t.Fatal("expected collision error, got nil")
 	}
 
-	if err := h.mem.UpdateObservation(ctx, "crudproj", obsID, "edited obs"); err != nil {
+	if err := h.mem.UpdateObservation(ctx, "crudproj", obsID, "edited obs", nil); err != nil {
 		t.Fatalf("update obs: %v", err)
 	}
 	d3, _ := h.stats.GetEntityDetail(ctx, "crudproj", "AlphaRenamed")
@@ -93,7 +93,7 @@ func TestEditByContentAndTriple(t *testing.T) {
 		t.Fatalf("rename: %v", err)
 	}
 
-	if err := h.mem.UpdateObservationByContent(ctx, "editproj", "DeltaRenamed", "keep this", "kept this"); err != nil {
+	if err := h.mem.UpdateObservationByContent(ctx, "editproj", "DeltaRenamed", "keep this", "kept this", nil); err != nil {
 		t.Fatalf("update obs: %v", err)
 	}
 	d, _ := h.stats.GetEntityDetail(ctx, "editproj", "DeltaRenamed")
