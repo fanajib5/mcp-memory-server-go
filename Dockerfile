@@ -3,11 +3,9 @@ WORKDIR /app
 RUN apk add --no-cache git
 COPY go.mod go.sum* ./
 RUN go mod download
-COPY *.go ./
-COPY schema.sql ./
-COPY templates/ ./templates/
-COPY static/ ./static/
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o mcp-memory-server .
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o mcp-memory-server ./cmd/server
 
 # Final stage: distroless static image, no shell, minimal attack surface, tiny footprint
 FROM gcr.io/distroless/static-debian12

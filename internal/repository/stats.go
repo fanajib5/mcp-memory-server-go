@@ -1,79 +1,44 @@
-package main
+package repository
 
 import (
 	"context"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"mcp-memory-server/internal/entity"
 )
 
-type EntityDetailObservation struct {
-	ID      int    `json:"id"`
-	Content string `json:"content"`
+// StatsRepository holds read-only queries that feed the web UI (dashboard,
+// entity detail, graph viz). Kept separate from MemoryRepository so the write
+// path stays focused and UI metrics can evolve independently.
+type StatsRepository interface {
+	GetEntityDetail(ctx context.Context, project, name string) (*entity.EntityDetail, error)
+	ListEntities(ctx context.Context, project, typeFilter, query string, limit int) ([]entity.EntitySummary, error)
+	DashboardMetrics(ctx context.Context, project string) (*entity.Metrics, error)
+	GraphData(ctx context.Context, project string) (*entity.GraphPayload, error)
+	ObservationByID(ctx context.Context, project string, id int) (content, entityName string, err error)
 }
 
-type EntityDetailRelation struct {
-	ID        int    `json:"id"`
-	Type      string `json:"type"`
-	Other     string `json:"other"`
-	Direction string `json:"direction"` // "out" or "in"
+type postgresStats struct {
+	pool *pgxpool.Pool
 }
 
-type EntityDetail struct {
-	Name         string                    `json:"name"`
-	Type         string                    `json:"type"`
-	Observations []EntityDetailObservation `json:"observations"`
-	Relations    []EntityDetailRelation    `json:"relations"`
+// NewStatsRepository builds a pgx-backed StatsRepository.
+func NewStatsRepository(pool *pgxpool.Pool) StatsRepository {
+	return &postgresStats{pool: pool}
 }
 
-type EntitySummary struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	ObsCount int    `json:"obsCount"`
-	RelCount int    `json:"relCount"`
-}
-
-type DayCount struct {
-	Day          string `json:"day"`
-	Entities     int    `json:"entities"`
-	Observations int    `json:"observations"`
-}
-
-type TypeCount struct {
-	Type  string `json:"type"`
-	Count int    `json:"count"`
-}
-
-type Metrics struct {
-	Entities        int             `json:"entities"`
-	Observations    int             `json:"observations"`
-	Relations       int             `json:"relations"`
-	RelationTypes   int             `json:"relationTypes"`
-	AllEntities     int             `json:"allEntities"`
-	AllObservations int             `json:"allObservations"`
-	ByType          []TypeCount     `json:"byType"`
-	AvgObs          float64         `json:"avgObs"`
-	AvgRel          float64         `json:"avgRel"`
-	Orphans         int             `json:"orphans"`
-	Sparse          int             `json:"sparse"`
-	TopByObs        []EntitySummary `json:"topByObs"`
-	TopByRel        []EntitySummary `json:"topByRel"`
-	Growth          []DayCount      `json:"growth"`
-	RelationTypesX  []TypeCount     `json:"relationTypeCounts"`
-	RecentEntities  []EntitySummary `json:"recentEntities"`
-}
-
-func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name string) (*EntityDetail, error) {
-	project = defaultProject(project)
-	d := &EntityDetail{}
-	err := pool.QueryRow(ctx,
+func (r *postgresStats) GetEntityDetail(ctx context.Context, project, name string) (*entity.EntityDetail, error) {
+	d := &entity.EntityDetail{}
+	err := r.pool.QueryRow(ctx,
 		`SELECT name, entity_type FROM memory_entities WHERE project_id = $1 AND name = $2`, project, name,
 	).Scan(&d.Name, &d.Type)
 	if err != nil {
 		return nil, err
 	}
 
-	oRows, err := pool.Query(ctx, `
+	oRows, err := r.pool.Query(ctx, `
 		SELECT o.id, o.content FROM memory_observations o
 		JOIN memory_entities e ON e.id = o.entity_id
 		WHERE e.project_id = $1 AND e.name = $2 ORDER BY o.created_at`, project, name)
@@ -81,7 +46,7 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 		return nil, err
 	}
 	for oRows.Next() {
-		var o EntityDetailObservation
+		var o entity.EntityDetailObservation
 		if err := oRows.Scan(&o.ID, &o.Content); err != nil {
 			oRows.Close()
 			return nil, err
@@ -90,7 +55,7 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 	}
 	oRows.Close()
 
-	outRows, err := pool.Query(ctx, `
+	outRows, err := r.pool.Query(ctx, `
 		SELECT r.id, r.relation_type, te.name FROM memory_relations r
 		JOIN memory_entities fe ON fe.id = r.from_entity_id
 		JOIN memory_entities te ON te.id = r.to_entity_id
@@ -99,7 +64,7 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 		return nil, err
 	}
 	for outRows.Next() {
-		var rel EntityDetailRelation
+		var rel entity.EntityDetailRelation
 		if err := outRows.Scan(&rel.ID, &rel.Type, &rel.Other); err != nil {
 			outRows.Close()
 			return nil, err
@@ -109,7 +74,7 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 	}
 	outRows.Close()
 
-	inRows, err := pool.Query(ctx, `
+	inRows, err := r.pool.Query(ctx, `
 		SELECT r.id, r.relation_type, fe.name FROM memory_relations r
 		JOIN memory_entities fe ON fe.id = r.from_entity_id
 		JOIN memory_entities te ON te.id = r.to_entity_id
@@ -118,7 +83,7 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 		return nil, err
 	}
 	for inRows.Next() {
-		var rel EntityDetailRelation
+		var rel entity.EntityDetailRelation
 		if err := inRows.Scan(&rel.ID, &rel.Type, &rel.Other); err != nil {
 			inRows.Close()
 			return nil, err
@@ -131,12 +96,11 @@ func GetEntityDetail(ctx context.Context, pool *pgxpool.Pool, project, name stri
 	return d, nil
 }
 
-func ListEntities(ctx context.Context, pool *pgxpool.Pool, project, typeFilter, query string, limit int) ([]EntitySummary, error) {
-	project = defaultProject(project)
+func (r *postgresStats) ListEntities(ctx context.Context, project, typeFilter, query string, limit int) ([]entity.EntitySummary, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		SELECT e.name, e.entity_type,
 		       COUNT(DISTINCT o.id) AS obs, COUNT(DISTINCT r.id) AS rel
 		FROM memory_entities e
@@ -152,9 +116,9 @@ func ListEntities(ctx context.Context, pool *pgxpool.Pool, project, typeFilter, 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []EntitySummary
+	var out []entity.EntitySummary
 	for rows.Next() {
-		var s EntitySummary
+		var s entity.EntitySummary
 		if err := rows.Scan(&s.Name, &s.Type, &s.ObsCount, &s.RelCount); err != nil {
 			return nil, err
 		}
@@ -163,11 +127,10 @@ func ListEntities(ctx context.Context, pool *pgxpool.Pool, project, typeFilter, 
 	return out, nil
 }
 
-func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (*Metrics, error) {
-	project = defaultProject(project)
-	m := &Metrics{}
+func (r *postgresStats) DashboardMetrics(ctx context.Context, project string) (*entity.Metrics, error) {
+	m := &entity.Metrics{}
 
-	if err := pool.QueryRow(ctx, `
+	if err := r.pool.QueryRow(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM memory_entities WHERE project_id = $1),
 		  (SELECT COUNT(*) FROM memory_observations o JOIN memory_entities e ON e.id = o.entity_id WHERE e.project_id = $1),
@@ -183,21 +146,21 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 		m.AvgRel = float64(m.Relations) / float64(m.Entities)
 	}
 
-	r, err := pool.Query(ctx, `SELECT entity_type, COUNT(*) FROM memory_entities WHERE project_id = $1 GROUP BY entity_type ORDER BY COUNT(*) DESC`, project)
+	r2, err := r.pool.Query(ctx, `SELECT entity_type, COUNT(*) FROM memory_entities WHERE project_id = $1 GROUP BY entity_type ORDER BY COUNT(*) DESC`, project)
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
-		var tc TypeCount
-		if err := r.Scan(&tc.Type, &tc.Count); err != nil {
-			r.Close()
+	for r2.Next() {
+		var tc entity.TypeCount
+		if err := r2.Scan(&tc.Type, &tc.Count); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		m.ByType = append(m.ByType, tc)
 	}
-	r.Close()
+	r2.Close()
 
-	if err := pool.QueryRow(ctx, `
+	if err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM memory_entities e
 		WHERE e.project_id = $1
 		  AND NOT EXISTS (SELECT 1 FROM memory_relations r WHERE r.from_entity_id = e.id)
@@ -205,7 +168,7 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 	).Scan(&m.Orphans); err != nil {
 		return nil, err
 	}
-	if err := pool.QueryRow(ctx, `
+	if err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM memory_entities e
 		WHERE e.project_id = $1
 		  AND NOT EXISTS (SELECT 1 FROM memory_observations o WHERE o.entity_id = e.id)`, project,
@@ -213,7 +176,7 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 		return nil, err
 	}
 
-	r, err = pool.Query(ctx, `
+	r2, err = r.pool.Query(ctx, `
 		SELECT e.name, e.entity_type, COUNT(o.id) c FROM memory_entities e
 		LEFT JOIN memory_observations o ON o.entity_id = e.id
 		WHERE e.project_id = $1
@@ -222,17 +185,17 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
-		var s EntitySummary
-		if err := r.Scan(&s.Name, &s.Type, &s.ObsCount); err != nil {
-			r.Close()
+	for r2.Next() {
+		var s entity.EntitySummary
+		if err := r2.Scan(&s.Name, &s.Type, &s.ObsCount); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		m.TopByObs = append(m.TopByObs, s)
 	}
-	r.Close()
+	r2.Close()
 
-	r, err = pool.Query(ctx, `
+	r2, err = r.pool.Query(ctx, `
 		SELECT e.name, e.entity_type, x.cnt FROM memory_entities e
 		JOIN LATERAL (
 		  SELECT ((SELECT COUNT(*) FROM memory_relations r WHERE r.from_entity_id = e.id)
@@ -243,68 +206,68 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
-		var s EntitySummary
-		if err := r.Scan(&s.Name, &s.Type, &s.RelCount); err != nil {
-			r.Close()
+	for r2.Next() {
+		var s entity.EntitySummary
+		if err := r2.Scan(&s.Name, &s.Type, &s.RelCount); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		m.TopByRel = append(m.TopByRel, s)
 	}
-	r.Close()
+	r2.Close()
 
-	r, err = pool.Query(ctx, `
+	r2, err = r.pool.Query(ctx, `
 		SELECT r.relation_type, COUNT(*) FROM memory_relations r
 		JOIN memory_entities e ON e.id = r.from_entity_id
 		WHERE e.project_id = $1 GROUP BY r.relation_type ORDER BY COUNT(*) DESC LIMIT 10`, project)
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
-		var tc TypeCount
-		if err := r.Scan(&tc.Type, &tc.Count); err != nil {
-			r.Close()
+	for r2.Next() {
+		var tc entity.TypeCount
+		if err := r2.Scan(&tc.Type, &tc.Count); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		m.RelationTypesX = append(m.RelationTypesX, tc)
 	}
-	r.Close()
+	r2.Close()
 
-	r, err = pool.Query(ctx, `
+	r2, err = r.pool.Query(ctx, `
 		SELECT e.name, e.entity_type FROM memory_entities e
 		WHERE e.project_id = $1 ORDER BY e.created_at DESC LIMIT 10`, project)
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
-		var s EntitySummary
-		if err := r.Scan(&s.Name, &s.Type); err != nil {
-			r.Close()
+	for r2.Next() {
+		var s entity.EntitySummary
+		if err := r2.Scan(&s.Name, &s.Type); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		m.RecentEntities = append(m.RecentEntities, s)
 	}
-	r.Close()
+	r2.Close()
 
 	entByDay := map[string]int{}
-	r, err = pool.Query(ctx, `
+	r2, err = r.pool.Query(ctx, `
 		SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') d, COUNT(*)
 		FROM memory_entities WHERE project_id = $1 AND created_at >= now() - interval '30 day'
 		GROUP BY 1`, project)
 	if err != nil {
 		return nil, err
 	}
-	for r.Next() {
+	for r2.Next() {
 		var d string
 		var c int
-		if err := r.Scan(&d, &c); err != nil {
-			r.Close()
+		if err := r2.Scan(&d, &c); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		entByDay[d] = c
 	}
-	r.Close()
-	r, err = pool.Query(ctx, `
+	r2.Close()
+	r2, err = r.pool.Query(ctx, `
 		SELECT to_char(date_trunc('day', o.created_at), 'YYYY-MM-DD') d, COUNT(*)
 		FROM memory_observations o JOIN memory_entities e ON e.id = o.entity_id
 		WHERE e.project_id = $1 AND o.created_at >= now() - interval '30 day'
@@ -313,16 +276,16 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 		return nil, err
 	}
 	obsByDay := map[string]int{}
-	for r.Next() {
+	for r2.Next() {
 		var d string
 		var c int
-		if err := r.Scan(&d, &c); err != nil {
-			r.Close()
+		if err := r2.Scan(&d, &c); err != nil {
+			r2.Close()
 			return nil, err
 		}
 		obsByDay[d] = c
 	}
-	r.Close()
+	r2.Close()
 	allDays := map[string]bool{}
 	for d := range entByDay {
 		allDays[d] = true
@@ -331,40 +294,21 @@ func DashboardMetrics(ctx context.Context, pool *pgxpool.Pool, project string) (
 		allDays[d] = true
 	}
 	for d := range allDays {
-		m.Growth = append(m.Growth, DayCount{Day: d, Entities: entByDay[d], Observations: obsByDay[d]})
+		m.Growth = append(m.Growth, entity.DayCount{Day: d, Entities: entByDay[d], Observations: obsByDay[d]})
 	}
 
 	return m, nil
 }
 
-type GraphNode struct {
-	ID    int    `json:"id"`
-	Label string `json:"label"`
-	Group string `json:"group"` // entity_type, drives vis-network node color
-}
+func (r *postgresStats) GraphData(ctx context.Context, project string) (*entity.GraphPayload, error) {
+	g := &entity.GraphPayload{}
 
-type GraphEdge struct {
-	From  int    `json:"from"`
-	To    int    `json:"to"`
-	Label string `json:"label"` // relation_type
-}
-
-type GraphPayload struct {
-	Nodes []GraphNode `json:"nodes"`
-	Edges []GraphEdge `json:"edges"`
-}
-
-// GraphData returns nodes (entities) and edges (relations) for visualization.
-func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphPayload, error) {
-	project = defaultProject(project)
-	g := &GraphPayload{}
-
-	rows, err := pool.Query(ctx, `SELECT id, name, entity_type FROM memory_entities WHERE project_id = $1 ORDER BY name`, project)
+	rows, err := r.pool.Query(ctx, `SELECT id, name, entity_type FROM memory_entities WHERE project_id = $1 ORDER BY name`, project)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var n GraphNode
+		var n entity.GraphNode
 		if err := rows.Scan(&n.ID, &n.Label, &n.Group); err != nil {
 			rows.Close()
 			return nil, err
@@ -373,7 +317,7 @@ func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphP
 	}
 	rows.Close()
 
-	rrows, err := pool.Query(ctx, `
+	rrows, err := r.pool.Query(ctx, `
 		SELECT r.from_entity_id, r.to_entity_id, r.relation_type FROM memory_relations r
 		JOIN memory_entities fe ON fe.id = r.from_entity_id
 		WHERE fe.project_id = $1`, project)
@@ -381,7 +325,7 @@ func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphP
 		return nil, err
 	}
 	for rrows.Next() {
-		var e GraphEdge
+		var e entity.GraphEdge
 		if err := rrows.Scan(&e.From, &e.To, &e.Label); err != nil {
 			rrows.Close()
 			return nil, err
@@ -393,10 +337,8 @@ func GraphData(ctx context.Context, pool *pgxpool.Pool, project string) (*GraphP
 	return g, nil
 }
 
-// ObservationByID returns one observation's content and its entity name, scoped to project.
-func ObservationByID(ctx context.Context, pool *pgxpool.Pool, project string, id int) (content, entityName string, err error) {
-	project = defaultProject(project)
-	err = pool.QueryRow(ctx, `
+func (r *postgresStats) ObservationByID(ctx context.Context, project string, id int) (content, entityName string, err error) {
+	err = r.pool.QueryRow(ctx, `
 		SELECT o.content, e.name FROM memory_observations o
 		JOIN memory_entities e ON e.id = o.entity_id
 		WHERE e.project_id = $1 AND o.id = $2`, project, id,

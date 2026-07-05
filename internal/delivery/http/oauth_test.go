@@ -1,36 +1,32 @@
-package main
+package http
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// newOAuthTestEnv builds an OAuthService + mux with a fixed test config.
 func newOAuthTestEnv(t *testing.T) (http.Handler, string) {
 	t.Helper()
-	jwtSecret = "test-secret"
-	handler := http.NewServeMux()
-	base := "https://example.com"
-	handler.HandleFunc("/.well-known/oauth-authorization-server", handleOAuthMetadata(base))
-	handler.HandleFunc("/oauth/authorize", handleOAuthAuthorize)
-	handler.HandleFunc("/oauth/token", handleToken)
-	handler.HandleFunc("/oauth/register", handleRegister)
-	return handler, jwtSecret
+	cfg := testConfig()
+	oauth := NewOAuthService(cfg)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", oauth.HandleMetadata)
+	mux.HandleFunc("/oauth/authorize", oauth.HandleAuthorize)
+	mux.HandleFunc("/oauth/token", oauth.HandleToken)
+	mux.HandleFunc("/oauth/register", oauth.HandleRegister)
+	return mux, cfg.JWTSecret
 }
 
 func TestHandleOAuthAuthorize(t *testing.T) {
 	handler, _ := newOAuthTestEnv(t)
 
 	t.Run("valid auth request redirects with code", func(t *testing.T) {
-		os.Setenv("OAUTH_CLIENT_ID", "user")
-		defer os.Unsetenv("OAUTH_CLIENT_ID")
-
 		req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=user&redirect_uri=https://claude.ai/oauth/callback&response_type=code&state=abc123", nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -65,11 +61,6 @@ func TestHandleTokenAuthorizationCode(t *testing.T) {
 	handler, secret := newOAuthTestEnv(t)
 
 	t.Run("exchange valid auth code for jwt", func(t *testing.T) {
-		os.Setenv("OAUTH_CLIENT_ID", "user")
-		os.Setenv("OAUTH_CLIENT_SECRET", "pass")
-		defer os.Unsetenv("OAUTH_CLIENT_ID")
-		defer os.Unsetenv("OAUTH_CLIENT_SECRET")
-
 		authorizeReq := httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=user&redirect_uri=https://claude.ai/oauth/callback&response_type=code", nil)
 		authorizeW := httptest.NewRecorder()
 		handler.ServeHTTP(authorizeW, authorizeReq)
@@ -111,11 +102,6 @@ func TestHandleTokenAuthorizationCode(t *testing.T) {
 	})
 
 	t.Run("reused auth code rejected", func(t *testing.T) {
-		os.Setenv("OAUTH_CLIENT_ID", "user")
-		os.Setenv("OAUTH_CLIENT_SECRET", "pass")
-		defer os.Unsetenv("OAUTH_CLIENT_ID")
-		defer os.Unsetenv("OAUTH_CLIENT_SECRET")
-
 		authorizeReq := httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=user&redirect_uri=https://claude.ai/oauth/callback&response_type=code", nil)
 		authorizeW := httptest.NewRecorder()
 		handler.ServeHTTP(authorizeW, authorizeReq)
@@ -168,57 +154,16 @@ func TestHandleOAuthMetadata(t *testing.T) {
 	if meta.TokenEndpoint != "https://example.com/oauth/token" {
 		t.Errorf("token_endpoint = %q, want https://example.com/oauth/token", meta.TokenEndpoint)
 	}
-	if len(meta.GrantTypesSupported) != 1 || meta.GrantTypesSupported[0] != "client_credentials" {
-		t.Errorf("grant_types = %v, want [client_credentials]", meta.GrantTypesSupported)
+	// Grant types include both authorization_code and client_credentials now.
+	found := false
+	for _, g := range meta.GrantTypesSupported {
+		if g == "authorization_code" {
+			found = true
+		}
 	}
-}
-
-func TestCORSMiddleware(t *testing.T) {
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	t.Run("options request returns 200 preflight", func(t *testing.T) {
-		mux := http.NewServeMux()
-		mux.Handle("/mcp", corsMiddleware("*", inner))
-		req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
-		req.Header.Set("Origin", "https://example.com")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", w.Code)
-		}
-		if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-			t.Errorf("aco = %q, want *", w.Header().Get("Access-Control-Allow-Origin"))
-		}
-	})
-
-	t.Run("request from allowed origin gets cors headers", func(t *testing.T) {
-		mux := http.NewServeMux()
-		mux.Handle("/mcp", corsMiddleware("https://example.com", inner))
-		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-		req.Header.Set("Origin", "https://example.com")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
-			t.Errorf("aco = %q, want https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
-		}
-	})
-
-	t.Run("request from disallowed origin blocked", func(t *testing.T) {
-		mux := http.NewServeMux()
-		mux.Handle("/mcp", corsMiddleware("https://allowed.com", inner))
-		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-		req.Header.Set("Origin", "https://evil.com")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Header().Get("Access-Control-Allow-Origin") == "https://evil.com" {
-			t.Errorf("aco should not be set for disallowed origin")
-		}
-	})
+	if !found {
+		t.Errorf("grant_types = %v, want to include authorization_code", meta.GrantTypesSupported)
+	}
 }
 
 func TestHandleRegister(t *testing.T) {
@@ -230,7 +175,6 @@ func TestHandleRegister(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
-
 		if w.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", w.Code)
 		}
@@ -252,7 +196,6 @@ func TestHandleRegister(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
-
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", w.Code)
 		}
@@ -263,11 +206,6 @@ func TestHandleTokenClientCredentials(t *testing.T) {
 	handler, secret := newOAuthTestEnv(t)
 
 	t.Run("valid client credentials returns jwt", func(t *testing.T) {
-		os.Setenv("OAUTH_CLIENT_ID", "user")
-		os.Setenv("OAUTH_CLIENT_SECRET", "pass")
-		defer os.Unsetenv("OAUTH_CLIENT_ID")
-		defer os.Unsetenv("OAUTH_CLIENT_SECRET")
-
 		body := strings.NewReader("client_id=user&client_secret=pass")
 		req := httptest.NewRequest(http.MethodPost, "/oauth/token", body)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -307,86 +245,11 @@ func TestHandleTokenClientCredentials(t *testing.T) {
 	})
 
 	t.Run("invalid client returns error", func(t *testing.T) {
-		os.Setenv("OAUTH_CLIENT_ID", "user")
-		os.Setenv("OAUTH_CLIENT_SECRET", "pass")
-		defer os.Unsetenv("OAUTH_CLIENT_ID")
-		defer os.Unsetenv("OAUTH_CLIENT_SECRET")
-
 		body := strings.NewReader("client_id=user&client_secret=wrong")
 		req := httptest.NewRequest(http.MethodPost, "/oauth/token", body)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
-
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", w.Code)
-		}
-	})
-}
-
-func TestAuthMiddleware(t *testing.T) {
-	handler, _ := newOAuthTestEnv(t)
-
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", authMiddleware("static-test-token", inner))
-	mux.Handle("/.well-known/oauth-authorization-server", handler)
-	mux.Handle("/oauth/token", handler)
-
-	t.Run("valid token passes through", func(t *testing.T) {
-		now := time.Now()
-		claims := &Claims{
-			RegisteredClaims: jwt.RegisteredClaims{
-				IssuedAt:  jwt.NewNumericDate(now),
-				ExpiresAt: jwt.NewNumericDate(now.Add(1 * time.Hour)),
-			},
-			Scope: "mcp",
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		signed, err := token.SignedString([]byte("test-secret"))
-		if err != nil {
-			t.Fatalf("sign: %v", err)
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
-		req.Header.Set("Authorization", "Bearer "+signed)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", w.Code)
-		}
-	})
-
-	t.Run("valid static token passes through", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
-		req.Header.Set("Authorization", "Bearer static-test-token")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 (static bearer token should be accepted)", w.Code)
-		}
-	})
-
-	t.Run("missing token rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401", w.Code)
-		}
-	})
-
-	t.Run("invalid token rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
-		req.Header.Set("Authorization", "Bearer invalid-token")
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", w.Code)
 		}

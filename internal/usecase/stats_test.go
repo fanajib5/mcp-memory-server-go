@@ -1,23 +1,25 @@
-package main
+package usecase
 
 import (
 	"context"
 	"testing"
+
+	"mcp-memory-server/internal/entity"
 )
 
 func TestStatsQueries(t *testing.T) {
-	pool := integrationPool(t)
-	defer pool.Close()
+	h := newTestHarness(t)
+	defer h.close()
 	ctx := context.Background()
 
-	CreateEntities(ctx, pool, "statsproj", []EntityInput{
-		{Name: "Hub", EntityType: "project", Observations: []string{"a", "b"}},
-		{Name: "Leaf", EntityType: "concept"},
-		{Name: "Solo", EntityType: "concept"}, // no observations, no relations -> orphan + sparse
+	h.mem.CreateEntities(ctx, "statsproj", []entity.EntityInput{
+		{Name: "Hub", Type: "project", Observations: []string{"a", "b"}},
+		{Name: "Leaf", Type: "concept"},
+		{Name: "Solo", Type: "concept"}, // no observations, no relations -> orphan + sparse
 	})
-	CreateRelations(ctx, pool, "statsproj", []RelationInput{{From: "Hub", To: "Leaf", RelationType: "uses"}})
+	h.mem.CreateRelations(ctx, "statsproj", []entity.RelationInput{{From: "Hub", To: "Leaf", RelationType: "uses"}})
 
-	d, err := GetEntityDetail(ctx, pool, "statsproj", "Hub")
+	d, err := h.stats.GetEntityDetail(ctx, "statsproj", "Hub")
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -31,34 +33,34 @@ func TestStatsQueries(t *testing.T) {
 		t.Fatalf("relations = %+v", d.Relations)
 	}
 
-	dl, _ := GetEntityDetail(ctx, pool, "statsproj", "Leaf")
+	dl, _ := h.stats.GetEntityDetail(ctx, "statsproj", "Leaf")
 	if len(dl.Relations) != 1 || dl.Relations[0].Direction != "in" || dl.Relations[0].Other != "Hub" {
 		t.Fatalf("incoming relations = %+v", dl.Relations)
 	}
 
-	rows, err := ListEntities(ctx, pool, "statsproj", "project", "", 50)
+	rows, err := h.stats.ListEntities(ctx, "statsproj", "project", "", 50)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(rows) != 1 || rows[0].Name != "Hub" || rows[0].ObsCount != 2 || rows[0].RelCount != 1 {
 		t.Fatalf("list rows = %+v", rows)
 	}
-	rows2, _ := ListEntities(ctx, pool, "statsproj", "", "hub", 50)
+	rows2, _ := h.stats.ListEntities(ctx, "statsproj", "", "hub", 50)
 	if len(rows2) != 1 {
 		t.Fatalf("search rows = %+v", rows2)
 	}
 
-	m, err := DashboardMetrics(ctx, pool, "statsproj")
+	m, err := h.stats.DashboardMetrics(ctx, "statsproj")
 	if err != nil {
 		t.Fatalf("metrics: %v", err)
 	}
 	if m.Entities != 3 || m.Observations != 2 || m.Relations != 1 {
 		t.Fatalf("counts = %+v", m)
 	}
-	if m.Orphans != 1 { // Solo only (Hub has out; Leaf has in)
+	if m.Orphans != 1 {
 		t.Fatalf("orphans = %d", m.Orphans)
 	}
-	if m.Sparse != 2 { // Leaf + Solo, both no observations
+	if m.Sparse != 2 {
 		t.Fatalf("sparse = %d", m.Sparse)
 	}
 	if len(m.TopByObs) == 0 || m.TopByObs[0].Name != "Hub" {
@@ -67,17 +69,17 @@ func TestStatsQueries(t *testing.T) {
 }
 
 func TestGraphData(t *testing.T) {
-	pool := integrationPool(t)
-	defer pool.Close()
+	h := newTestHarness(t)
+	defer h.close()
 	ctx := context.Background()
 
-	CreateEntities(ctx, pool, "graphproj", []EntityInput{
-		{Name: "A", EntityType: "project"},
-		{Name: "B", EntityType: "tool"},
+	h.mem.CreateEntities(ctx, "graphproj", []entity.EntityInput{
+		{Name: "A", Type: "project"},
+		{Name: "B", Type: "tool"},
 	})
-	CreateRelations(ctx, pool, "graphproj", []RelationInput{{From: "A", To: "B", RelationType: "uses"}})
+	h.mem.CreateRelations(ctx, "graphproj", []entity.RelationInput{{From: "A", To: "B", RelationType: "uses"}})
 
-	g, err := GraphData(ctx, pool, "graphproj")
+	g, err := h.stats.GraphData(ctx, "graphproj")
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}

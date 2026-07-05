@@ -1,124 +1,47 @@
-package main
+package repository
 
 import (
 	"context"
-	"embed"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"mcp-memory-server/internal/entity"
 )
 
-//go:embed schema.sql
-var schemaFS embed.FS
-
-// EnsureSchema runs schema.sql on startup so the container is self-sufficient.
-func EnsureSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	sql, err := schemaFS.ReadFile("schema.sql")
-	if err != nil {
-		return fmt.Errorf("read schema.sql: %w", err)
-	}
-	_, err = pool.Exec(ctx, string(sql))
-	return err
+// MemoryRepository is the data-access boundary for the knowledge graph.
+// Implementations receive already-normalized values (project non-empty, entity
+// types/relation types normalized) — domain rules live in the usecase layer.
+type MemoryRepository interface {
+	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error)
+	AddObservations(ctx context.Context, project, entityName string, observations []string) error
+	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
+	DeleteEntities(ctx context.Context, project string, names []string) error
+	Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error)
+	ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error)
+	Export(ctx context.Context, project string) (*entity.ExportPayload, error)
+	Import(ctx context.Context, project string, g *entity.ExportPayload) (*entity.ImportResult, error)
+	UpdateEntity(ctx context.Context, project, oldName, newName, entityType string) error
+	DeleteObservation(ctx context.Context, project string, id int) error
+	UpdateObservation(ctx context.Context, project string, id int, content string) error
+	DeleteRelation(ctx context.Context, project string, id int) error
+	DeleteObservationByContent(ctx context.Context, project, entityName, content string) error
+	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string) error
+	DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error
 }
 
-// defaultProject normalizes the project selector for writes: blank -> "default".
-// (Read/export functions intentionally keep "" to mean "all projects".)
-func defaultProject(p string) string {
-	if p = strings.TrimSpace(p); p == "" {
-		return "default"
-	}
-	return p
+// postgresMemory is the pgx-backed MemoryRepository.
+type postgresMemory struct {
+	pool *pgxpool.Pool
 }
 
-// normalizeEntityType lowercases + trims; empty becomes "concept".
-// The DB FK (memory_entity_types) rejects anything not registered.
-func normalizeEntityType(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "" {
-		s = "concept"
-	}
-	return s
+// NewMemoryRepository builds a pgx-backed MemoryRepository.
+func NewMemoryRepository(pool *pgxpool.Pool) MemoryRepository {
+	return &postgresMemory{pool: pool}
 }
 
-// normalizeRelationType forces UPPER_SNAKE_CASE: trim, uppercase, and turn any
-// run of non-alphanumeric characters into a single "_".
-func normalizeRelationType(s string) string {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	var b strings.Builder
-	prevUnder := false
-	for _, r := range s {
-		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevUnder = false
-			continue
-		}
-		if !prevUnder && b.Len() > 0 {
-			b.WriteByte('_')
-			prevUnder = true
-		}
-	}
-	return strings.Trim(b.String(), "_")
-}
-
-type Entity struct {
-	Name         string   `json:"name"`
-	EntityType   string   `json:"type"`
-	Observations []string `json:"observations"`
-}
-
-type EntityInput struct {
-	Name         string   `json:"name" jsonschema:"Unique entity name within its project, e.g. 'MIS-APAR' or 'Faiq'"`
-	EntityType   string   `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
-	Observations []string `json:"observations,omitempty" jsonschema:"Facts about this entity"`
-}
-
-type RelationInput struct {
-	From         string `json:"from"`
-	To           string `json:"to"`
-	RelationType string `json:"relationType" jsonschema:"Active voice, UPPER_SNAKE_CASE, e.g. DEPLOYED_VIA"`
-}
-
-type SearchResult struct {
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	Observations []string `json:"observations"`
-	Relations    []string `json:"relations"`
-}
-
-type FullGraph struct {
-	Entities  []Entity `json:"entities"`
-	Relations []string `json:"relations"`
-}
-
-// Structured graph shape used by export/import: relations carry their parts
-// explicitly so import needs no fragile string parsing (lossless round-trip).
-type ExportEntity struct {
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	Observations []string `json:"observations"`
-}
-
-type ExportRelation struct {
-	From         string `json:"from"`
-	RelationType string `json:"relationType"`
-	To           string `json:"to"`
-}
-
-type ExportPayload struct {
-	Project   string           `json:"project,omitempty"`
-	Entities  []ExportEntity   `json:"entities"`
-	Relations []ExportRelation `json:"relations"`
-}
-
-type ImportResult struct {
-	EntitiesCreated  int `json:"entitiesCreated"`
-	RelationsCreated int `json:"relationsCreated"`
-}
-
-func CreateEntities(ctx context.Context, pool *pgxpool.Pool, project string, entities []EntityInput) ([]string, error) {
-	project = defaultProject(project)
-	tx, err := pool.Begin(ctx)
+func (r *postgresMemory) CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error) {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -129,10 +52,9 @@ func CreateEntities(ctx context.Context, pool *pgxpool.Pool, project string, ent
 		var id int
 		err := tx.QueryRow(ctx, `SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, e.Name).Scan(&id)
 		if err != nil {
-			et := normalizeEntityType(e.EntityType)
 			if err := tx.QueryRow(ctx,
 				`INSERT INTO memory_entities (project_id, name, entity_type) VALUES ($1, $2, $3) RETURNING id`,
-				project, e.Name, et,
+				project, e.Name, e.Type,
 			).Scan(&id); err != nil {
 				return nil, fmt.Errorf("create entity %q: %w", e.Name, err)
 			}
@@ -149,9 +71,8 @@ func CreateEntities(ctx context.Context, pool *pgxpool.Pool, project string, ent
 	return created, tx.Commit(ctx)
 }
 
-func AddObservations(ctx context.Context, pool *pgxpool.Pool, project, entityName string, observations []string) error {
-	project = defaultProject(project)
-	tx, err := pool.Begin(ctx)
+func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string) error {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -177,9 +98,8 @@ func AddObservations(ctx context.Context, pool *pgxpool.Pool, project, entityNam
 	return tx.Commit(ctx)
 }
 
-func CreateRelations(ctx context.Context, pool *pgxpool.Pool, project string, relations []RelationInput) ([]string, error) {
-	project = defaultProject(project)
-	tx, err := pool.Begin(ctx)
+func (r *postgresMemory) CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error) {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -200,16 +120,15 @@ func CreateRelations(ctx context.Context, pool *pgxpool.Pool, project string, re
 	}
 
 	var created []string
-	for _, r := range relations {
-		relType := normalizeRelationType(r.RelationType)
-		if relType == "" {
-			return nil, fmt.Errorf("relation has empty type after normalization: %q", r.RelationType)
+	for _, rel := range relations {
+		if rel.RelationType == "" {
+			return nil, fmt.Errorf("relation has empty type")
 		}
-		fromID, err := getID(r.From)
+		fromID, err := getID(rel.From)
 		if err != nil {
 			return nil, err
 		}
-		toID, err := getID(r.To)
+		toID, err := getID(rel.To)
 		if err != nil {
 			return nil, err
 		}
@@ -217,34 +136,26 @@ func CreateRelations(ctx context.Context, pool *pgxpool.Pool, project string, re
 			`INSERT INTO memory_relations (from_entity_id, to_entity_id, relation_type)
 			 VALUES ($1, $2, $3)
 			 ON CONFLICT (from_entity_id, to_entity_id, relation_type) DO NOTHING`,
-			fromID, toID, relType,
+			fromID, toID, rel.RelationType,
 		)
 		if err != nil {
 			return nil, err
 		}
-		created = append(created, fmt.Sprintf("%s --%s--> %s", r.From, relType, r.To))
+		created = append(created, fmt.Sprintf("%s --%s--> %s", rel.From, rel.RelationType, rel.To))
 	}
 	return created, tx.Commit(ctx)
 }
 
-func DeleteEntities(ctx context.Context, pool *pgxpool.Pool, project string, names []string) error {
-	project = defaultProject(project)
-	_, err := pool.Exec(ctx, `DELETE FROM memory_entities WHERE project_id = $1 AND name = ANY($2::text[])`, project, names)
+func (r *postgresMemory) DeleteEntities(ctx context.Context, project string, names []string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM memory_entities WHERE project_id = $1 AND name = ANY($2::text[])`, project, names)
 	return err
 }
 
-func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string, limit int) ([]SearchResult, error) {
-	project = defaultProject(project)
+func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	// Aggregate the entity's name + ALL its observations into a single tsvector
-	// before matching, so a multi-word query matches when its terms are spread
-	// across different observations. The previous per-row `@@` match ANDed the
-	// query terms within a single observation/name, so multi-word queries almost
-	// never matched. websearch_to_tsquery also tolerates punctuation and supports
-	// "quoted phrases", OR, and -exclusion. Results ranked by relevance.
-	rows, err := pool.Query(ctx, `
+	rows, err := r.pool.Query(ctx, `
 		SELECT id, name, entity_type
 		FROM (
 		  SELECT e.id, e.name, e.entity_type,
@@ -277,10 +188,10 @@ func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string
 		found = append(found, r)
 	}
 
-	var results []SearchResult
-	for _, r := range found {
-		obsRows, err := pool.Query(ctx,
-			`SELECT content FROM memory_observations WHERE entity_id = $1 ORDER BY created_at`, r.id)
+	var results []entity.SearchResult
+	for _, rr := range found {
+		obsRows, err := r.pool.Query(ctx,
+			`SELECT content FROM memory_observations WHERE entity_id = $1 ORDER BY created_at`, rr.id)
 		if err != nil {
 			return nil, err
 		}
@@ -296,10 +207,10 @@ func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string
 		obsRows.Close()
 
 		var relations []string
-		outRows, err := pool.Query(ctx, `
+		outRows, err := r.pool.Query(ctx, `
 			SELECT r.relation_type, te.name FROM memory_relations r
 			JOIN memory_entities te ON te.id = r.to_entity_id
-			WHERE r.from_entity_id = $1`, r.id)
+			WHERE r.from_entity_id = $1`, rr.id)
 		if err != nil {
 			return nil, err
 		}
@@ -309,14 +220,14 @@ func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string
 				outRows.Close()
 				return nil, err
 			}
-			relations = append(relations, fmt.Sprintf("%s --%s--> %s", r.name, relType, toName))
+			relations = append(relations, fmt.Sprintf("%s --%s--> %s", rr.name, relType, toName))
 		}
 		outRows.Close()
 
-		inRows, err := pool.Query(ctx, `
+		inRows, err := r.pool.Query(ctx, `
 			SELECT r.relation_type, fe.name FROM memory_relations r
 			JOIN memory_entities fe ON fe.id = r.from_entity_id
-			WHERE r.to_entity_id = $1`, r.id)
+			WHERE r.to_entity_id = $1`, rr.id)
 		if err != nil {
 			return nil, err
 		}
@@ -326,27 +237,26 @@ func SearchMemory(ctx context.Context, pool *pgxpool.Pool, project, query string
 				inRows.Close()
 				return nil, err
 			}
-			relations = append(relations, fmt.Sprintf("%s --%s--> %s", fromName, relType, r.name))
+			relations = append(relations, fmt.Sprintf("%s --%s--> %s", fromName, relType, rr.name))
 		}
 		inRows.Close()
 
-		results = append(results, SearchResult{
-			Name: r.name, Type: r.typ, Observations: observations, Relations: relations,
+		results = append(results, entity.SearchResult{
+			Name: rr.name, Type: rr.typ, Observations: observations, Relations: relations,
 		})
 	}
 	return results, nil
 }
 
-// ReadFullGraph returns the graph for one project, or all projects when project == "".
-// Relations are formatted as "A --R--> B" strings (unchanged output shape for agents).
-func ReadFullGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*FullGraph, error) {
+// ReadGraph returns the graph for one project, or all projects when project == "".
+func (r *postgresMemory) ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error) {
 	entQuery := `SELECT id, name, entity_type FROM memory_entities ORDER BY name`
 	var entArgs []any
 	if project != "" {
 		entQuery = `SELECT id, name, entity_type FROM memory_entities WHERE project_id = $1 ORDER BY name`
 		entArgs = []any{project}
 	}
-	entRows, err := pool.Query(ctx, entQuery, entArgs...)
+	entRows, err := r.pool.Query(ctx, entQuery, entArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +282,7 @@ func ReadFullGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Fu
 		obsQuery += ` WHERE e.project_id = $1`
 		obsArgs = []any{project}
 	}
-	obsRows, err := pool.Query(ctx, obsQuery, obsArgs...)
+	obsRows, err := r.pool.Query(ctx, obsQuery, obsArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +306,7 @@ func ReadFullGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Fu
 		relQuery += ` WHERE fe.project_id = $1 AND te.project_id = $1`
 		relArgs = []any{project}
 	}
-	relRows, err := pool.Query(ctx, relQuery, relArgs...)
+	relRows, err := r.pool.Query(ctx, relQuery, relArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -410,18 +320,17 @@ func ReadFullGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Fu
 		relations = append(relations, fmt.Sprintf("%s --%s--> %s", from, relType, to))
 	}
 
-	graph := &FullGraph{Relations: relations}
+	graph := &entity.FullGraph{Relations: relations}
 	for _, e := range entities {
-		graph.Entities = append(graph.Entities, Entity{
+		graph.Entities = append(graph.Entities, entity.Entity{
 			Name: e.name, EntityType: e.typ, Observations: obsByEntity[e.id],
 		})
 	}
 	return graph, nil
 }
 
-// ExportGraph returns a structured payload for one project (blank = all projects),
-// suitable for backup/migration and lossless re-import.
-func ExportGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*ExportPayload, error) {
+// Export returns a structured payload for one project (blank = all projects).
+func (r *postgresMemory) Export(ctx context.Context, project string) (*entity.ExportPayload, error) {
 	scope := project != ""
 	entQuery := `SELECT id, name, entity_type FROM memory_entities ORDER BY name`
 	var entArgs []any
@@ -429,7 +338,7 @@ func ExportGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Expo
 		entQuery = `SELECT id, name, entity_type FROM memory_entities WHERE project_id = $1 ORDER BY name`
 		entArgs = []any{project}
 	}
-	entRows, err := pool.Query(ctx, entQuery, entArgs...)
+	entRows, err := r.pool.Query(ctx, entQuery, entArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +364,7 @@ func ExportGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Expo
 		obsQuery += ` WHERE e.project_id = $1`
 		obsArgs = []any{project}
 	}
-	obsRows, err := pool.Query(ctx, obsQuery, obsArgs...)
+	obsRows, err := r.pool.Query(ctx, obsQuery, obsArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -479,37 +388,36 @@ func ExportGraph(ctx context.Context, pool *pgxpool.Pool, project string) (*Expo
 		relQuery += ` WHERE fe.project_id = $1 AND te.project_id = $1`
 		relArgs = []any{project}
 	}
-	relRows, err := pool.Query(ctx, relQuery, relArgs...)
+	relRows, err := r.pool.Query(ctx, relQuery, relArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer relRows.Close()
-	var relations []ExportRelation
+	var relations []entity.ExportRelation
 	for relRows.Next() {
 		var from, relType, to string
 		if err := relRows.Scan(&from, &relType, &to); err != nil {
 			return nil, err
 		}
-		relations = append(relations, ExportRelation{From: from, RelationType: relType, To: to})
+		relations = append(relations, entity.ExportRelation{From: from, RelationType: relType, To: to})
 	}
 
-	payload := &ExportPayload{Project: project, Relations: relations}
+	payload := &entity.ExportPayload{Project: project, Relations: relations}
 	for _, e := range entities {
-		payload.Entities = append(payload.Entities, ExportEntity{
+		payload.Entities = append(payload.Entities, entity.ExportEntity{
 			Name: e.name, Type: e.typ, Observations: obsByEntity[e.id],
 		})
 	}
 	return payload, nil
 }
 
-// ImportGraph loads a structured payload into a project. Idempotent: existing
+// Import loads a structured payload into a project. Idempotent: existing
 // entities are reused (observations appended), existing relations are skipped.
-func ImportGraph(ctx context.Context, pool *pgxpool.Pool, project string, g *ExportPayload) (*ImportResult, error) {
-	project = defaultProject(project)
+func (r *postgresMemory) Import(ctx context.Context, project string, g *entity.ExportPayload) (*entity.ImportResult, error) {
 	if g == nil {
-		return &ImportResult{}, nil
+		return &entity.ImportResult{}, nil
 	}
-	tx, err := pool.Begin(ctx)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -528,15 +436,14 @@ func ImportGraph(ctx context.Context, pool *pgxpool.Pool, project string, g *Exp
 		return id, err
 	}
 
-	res := &ImportResult{}
+	res := &entity.ImportResult{}
 	for _, e := range g.Entities {
-		et := normalizeEntityType(e.Type)
 		var id int
 		err := tx.QueryRow(ctx, `SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, e.Name).Scan(&id)
 		if err != nil {
 			if err := tx.QueryRow(ctx,
 				`INSERT INTO memory_entities (project_id, name, entity_type) VALUES ($1, $2, $3) RETURNING id`,
-				project, e.Name, et,
+				project, e.Name, e.Type,
 			).Scan(&id); err != nil {
 				return nil, fmt.Errorf("import entity %q: %w", e.Name, err)
 			}
@@ -550,16 +457,15 @@ func ImportGraph(ctx context.Context, pool *pgxpool.Pool, project string, g *Exp
 			}
 		}
 	}
-	for _, r := range g.Relations {
-		relType := normalizeRelationType(r.RelationType)
-		if relType == "" {
+	for _, rel := range g.Relations {
+		if rel.RelationType == "" {
 			continue
 		}
-		fromID, err := getOrCreate(r.From)
+		fromID, err := getOrCreate(rel.From)
 		if err != nil {
 			return nil, err
 		}
-		toID, err := getOrCreate(r.To)
+		toID, err := getOrCreate(rel.To)
 		if err != nil {
 			return nil, err
 		}
@@ -567,7 +473,7 @@ func ImportGraph(ctx context.Context, pool *pgxpool.Pool, project string, g *Exp
 			`INSERT INTO memory_relations (from_entity_id, to_entity_id, relation_type)
 			 VALUES ($1, $2, $3)
 			 ON CONFLICT (from_entity_id, to_entity_id, relation_type) DO NOTHING`,
-			fromID, toID, relType,
+			fromID, toID, rel.RelationType,
 		)
 		if err != nil {
 			return nil, err
@@ -575,4 +481,131 @@ func ImportGraph(ctx context.Context, pool *pgxpool.Pool, project string, g *Exp
 		res.RelationsCreated += int(tag.RowsAffected())
 	}
 	return res, tx.Commit(ctx)
+}
+
+// ---- Mutations (rename / update / delete) ----
+
+// UpdateEntity renames and/or changes the type of an entity within a project.
+// Rejects a rename if the new name already exists in the same project.
+func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, newName, entityType string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var id int
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, oldName,
+	).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("entity %q not found in project %q: %w", oldName, project, err)
+	}
+
+	if newName != oldName {
+		var collision int
+		err = tx.QueryRow(ctx,
+			`SELECT 1 FROM memory_entities WHERE project_id = $1 AND name = $2 AND id <> $3`,
+			project, newName, id,
+		).Scan(&collision)
+		if err == nil {
+			return fmt.Errorf("name %q already exists in project %q", newName, project)
+		}
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE memory_entities SET name = $2, entity_type = $3 WHERE id = $1`, id, newName, entityType,
+	); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, id int) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM memory_observations o
+		USING memory_entities e
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, project, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("observation not found in project %q", project)
+	}
+	return nil
+}
+
+func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE memory_observations o SET content = $3
+		FROM memory_entities e
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, project, id, content)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("observation not found in project %q", project)
+	}
+	return nil
+}
+
+func (r *postgresMemory) DeleteRelation(ctx context.Context, project string, id int) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM memory_relations r
+		USING memory_entities fe
+		WHERE r.from_entity_id = fe.id AND fe.project_id = $1 AND r.id = $2`, project, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("relation not found in project %q", project)
+	}
+	return nil
+}
+
+func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project, entityName, content string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM memory_observations o
+		USING memory_entities e
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`,
+		project, entityName, content)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("observation %q not found on entity %q in project %q", content, entityName, project)
+	}
+	return nil
+}
+
+func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE memory_observations o SET content = $4
+		FROM memory_entities e
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`,
+		project, entityName, oldContent, newContent)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("observation %q not found on entity %q in project %q", oldContent, entityName, project)
+	}
+	return nil
+}
+
+func (r *postgresMemory) DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM memory_relations r
+		USING memory_entities fe, memory_entities te
+		WHERE r.from_entity_id = fe.id AND r.to_entity_id = te.id
+		  AND fe.project_id = $1 AND te.project_id = $1
+		  AND fe.name = $2 AND te.name = $3 AND r.relation_type = $4`,
+		project, from, to, relationType)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("relation %q --%s--> %q not found in project %q", from, relationType, to, project)
+	}
+	return nil
 }

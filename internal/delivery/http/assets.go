@@ -1,4 +1,4 @@
-package main
+package http
 
 import (
 	"embed"
@@ -14,10 +14,13 @@ var templateFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
-var tmpl *template.Template
+// Assets exposes the embedded static file system (for the /static route).
+func StaticFS() embed.FS { return staticFS }
 
-func initTemplates() {
-	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
+// MustParseTemplates parses all page + fragment templates with the shared
+// helper func map. It panics on parse error (called once at startup).
+func MustParseTemplates() *template.Template {
+	return template.Must(template.New("").Funcs(template.FuncMap{
 		"truncate": func(s string, n int) string {
 			if len(s) > n {
 				return s[:n] + "…"
@@ -44,16 +47,14 @@ func initTemplates() {
 	}).ParseFS(templateFS, "templates/*.html"))
 }
 
-// render executes a full-page template (each page pulls in shared head/nav partials).
-func render(w http.ResponseWriter, page string, data any) {
+func render(w http.ResponseWriter, tmpl *template.Template, page string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, page, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// renderFragment executes a standalone fragment (for htmx responses, no <html>).
-func renderFragment(w http.ResponseWriter, name string, data any) {
+func renderFragment(w http.ResponseWriter, tmpl *template.Template, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
