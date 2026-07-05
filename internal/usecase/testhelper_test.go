@@ -42,6 +42,9 @@ func newTestHarnessWithEmbedder(t *testing.T, emb gateway.Embedder) *testHarness
 	if _, err := pool.Exec(ctx, `DELETE FROM memory_entities`); err != nil {
 		t.Fatalf("clean: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `DELETE FROM memory_history`); err != nil {
+		t.Fatalf("clean history: %v", err)
+	}
 	return &testHarness{
 		mem:   NewMemoryUseCase(repository.NewMemoryRepository(pool), emb),
 		stats: NewStatsUseCase(repository.NewStatsRepository(pool)),

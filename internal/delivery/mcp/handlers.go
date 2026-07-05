@@ -140,3 +140,11 @@ func (h *Handlers) handleDeleteRelation(ctx context.Context, req *mcpgo.CallTool
 	}
 	return textResult("Deleted relation " + in.From + " --" + in.RelationType + "--> " + in.To), nil, nil
 }
+
+func (h *Handlers) handleGetHistory(ctx context.Context, req *mcpgo.CallToolRequest, in GetHistoryInput) (*mcpgo.CallToolResult, any, error) {
+	entries, err := h.uc.GetHistory(ctx, in.Project, in.EntityName, in.Limit)
+	if err != nil {
+		return textResult("error: " + err.Error()), nil, nil
+	}
+	return jsonResult(entries), nil, nil
+}

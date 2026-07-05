@@ -8,7 +8,7 @@
 {{template "nav" .}}
 <main class="wrap">
   {{if $d}}
-  <h1>{{$d.Name}} <small>({{$d.Type}})</small></h1>
+  <h1>{{$d.Name}} <small>({{$d.Type}})</small> <a href="/ui/history?name={{$d.Name | queryenc}}&p={{$p}}" class="hist-link" title="Change history">⟳ history</a></h1>
 
   <details class="panel"><summary>Edit entity</summary>
     <form method="post" action="/ui/entity/edit">

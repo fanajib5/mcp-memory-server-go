@@ -151,3 +151,16 @@ type GraphPayload struct {
 	Nodes []GraphNode `json:"nodes"`
 	Edges []GraphEdge `json:"edges"`
 }
+
+// ---- Versioning ----
+
+// HistoryEntry is one audit-trail row for an entity/observation mutation.
+type HistoryEntry struct {
+	ID         int64    `json:"id"`
+	EntityName string   `json:"entityName"`
+	Action     string   `json:"action"`
+	OldValue   *string  `json:"oldValue,omitempty"`
+	NewValue   *string  `json:"newValue,omitempty"`
+	Confidence *float64 `json:"confidence,omitempty"`
+	HappenedAt string   `json:"happenedAt"`
+}

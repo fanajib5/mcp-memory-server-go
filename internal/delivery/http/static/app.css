@@ -39,6 +39,15 @@ button.x:hover{color:#f66}
 .conf.mid{background:#332b16;color:#d9b35a}
 .conf.low{background:#331616;color:#f08a8a}
 .conf-input{width:90px}
+.hist{width:100%;border-collapse:collapse;font-size:14px}
+.hist th{text-align:left;padding:6px 8px;border-bottom:2px solid var(--line);color:var(--muted)}
+.hist td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.hist-old{color:#f08a8a;text-decoration:line-through;opacity:.7}
+.hist-new{color:#5fd17a}
+.hist-action{font-size:12px;padding:2px 6px;border-radius:4px;background:#0f1115;color:var(--muted)}
+.hist-time{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.hist-link{font-size:14px;color:var(--muted);text-decoration:none}
+.hist-link:hover{color:var(--fg)}
 .login{max-width:280px;margin:80px auto;text-align:center}
 .login form{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .login input{padding:8px;background:#161a21;color:var(--fg);border:1px solid var(--line);border-radius:4px}

@@ -1,0 +1,31 @@
+{{define "history"}}
+{{$p := .Project}}
+{{$name := .Name}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap">
+  <h1>History: <a href="/ui/entity?name={{$name | queryenc}}&p={{$p}}">{{$name}}</a></h1>
+  {{if .Entries}}
+  <table class="hist">
+    <thead><tr><th>When</th><th>Action</th><th>Old</th><th>New</th></tr></thead>
+    <tbody>
+    {{range .Entries}}
+    <tr>
+      <td class="hist-time">{{.HappenedAt}}</td>
+      <td><span class="hist-action">{{.Action}}</span></td>
+      <td class="hist-old">{{if .OldValue}}{{.OldValue}}{{else}}—{{end}}</td>
+      <td class="hist-new">{{if .NewValue}}{{.NewValue}}{{else}}—{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p><em>No changes recorded.</em></p>
+  {{end}}
+</main>
+</body>
+</html>
+{{end}}
