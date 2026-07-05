@@ -49,7 +49,7 @@ func (h *Handlers) handleCreateEntities(ctx context.Context, req *mcpgo.CallTool
 }
 
 func (h *Handlers) handleAddObservations(ctx context.Context, req *mcpgo.CallToolRequest, in AddObservationsInput) (*mcpgo.CallToolResult, any, error) {
-	if err := h.uc.AddObservations(ctx, in.Project, in.EntityName, in.Observations); err != nil {
+	if err := h.uc.AddObservations(ctx, in.Project, in.EntityName, in.Observations, in.Confidences); err != nil {
 		return textResult("error: " + err.Error()), nil, nil
 	}
 	return textResult("Observations added to " + in.EntityName), nil, nil
@@ -121,7 +121,7 @@ func (h *Handlers) handleRenameEntity(ctx context.Context, req *mcpgo.CallToolRe
 }
 
 func (h *Handlers) handleUpdateObservation(ctx context.Context, req *mcpgo.CallToolRequest, in UpdateObservationInput) (*mcpgo.CallToolResult, any, error) {
-	if err := h.uc.UpdateObservationByContent(ctx, in.Project, in.EntityName, in.OldContent, in.NewContent); err != nil {
+	if err := h.uc.UpdateObservationByContent(ctx, in.Project, in.EntityName, in.OldContent, in.NewContent, in.NewConfidence); err != nil {
 		return textResult("error: " + err.Error()), nil, nil
 	}
 	return textResult("Updated observation on " + in.EntityName), nil, nil

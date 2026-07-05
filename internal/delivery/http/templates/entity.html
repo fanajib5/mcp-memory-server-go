@@ -33,6 +33,7 @@
     <input type="hidden" name="p" value="{{$p}}">
     <input type="hidden" name="entity" value="{{$d.Name}}">
     <input name="content" placeholder="new observation…" required>
+    <input name="confidence" type="number" min="0" max="1" step="0.1" placeholder="conf (0-1, optional)" class="conf-input" title="Confidence 0.0-1.0, optional">
     <button>Add</button>
   </form>
 
@@ -85,6 +86,12 @@
 {{define "observation_row"}}
 <li id="obs-{{.Obs.ID}}">
   <span>{{.Obs.Content}}</span>
+  {{if .Obs.Confidence}}
+    {{$c := printf "%.1f" .Obs.Confidence}}
+    {{if ge .Obs.Confidence 0.7}}<span class="conf high" title="confidence">{{$c}}</span>
+    {{else if ge .Obs.Confidence 0.3}}<span class="conf mid" title="confidence">{{$c}}</span>
+    {{else}}<span class="conf low" title="confidence">{{$c}}</span>{{end}}
+  {{end}}
   <span class="rowbtns">
     <button class="x" type="button" title="Edit"
             hx-get="/ui/observation/edit?id={{.Obs.ID}}&p={{.Project}}"

@@ -14,20 +14,21 @@ import (
 // types/relation types normalized) — domain rules live in the usecase layer.
 type MemoryRepository interface {
 	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error)
-	AddObservations(ctx context.Context, project, entityName string, observations []string) error
+	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error
 	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
 	DeleteEntities(ctx context.Context, project string, names []string) error
-	Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error)
+	Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error)
 	ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error)
 	Export(ctx context.Context, project string) (*entity.ExportPayload, error)
 	Import(ctx context.Context, project string, g *entity.ExportPayload) (*entity.ImportResult, error)
 	UpdateEntity(ctx context.Context, project, oldName, newName, entityType string) error
 	DeleteObservation(ctx context.Context, project string, id int) error
-	UpdateObservation(ctx context.Context, project string, id int, content string) error
+	UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error
 	DeleteRelation(ctx context.Context, project string, id int) error
 	DeleteObservationByContent(ctx context.Context, project, entityName, content string) error
-	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string) error
+	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error
 	DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error
+	TouchAccessed(ctx context.Context, entityIDs []int) error
 }
 
 // postgresMemory is the pgx-backed MemoryRepository.
@@ -59,9 +60,13 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 				return nil, fmt.Errorf("create entity %q: %w", e.Name, err)
 			}
 		}
-		for _, obs := range e.Observations {
+		for i, obs := range e.Observations {
+			var conf any
+			if i < len(e.Confidences) {
+				conf = e.Confidences[i]
+			}
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO memory_observations (entity_id, content) VALUES ($1, $2)`, id, obs,
+				`INSERT INTO memory_observations (entity_id, content, confidence) VALUES ($1, $2, $3)`, id, obs, conf,
 			); err != nil {
 				return nil, fmt.Errorf("add observation to %q: %w", e.Name, err)
 			}
@@ -71,7 +76,7 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 	return created, tx.Commit(ctx)
 }
 
-func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string) error {
+func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -88,9 +93,13 @@ func (r *postgresMemory) AddObservations(ctx context.Context, project, entityNam
 			return fmt.Errorf("create entity %q: %w", entityName, err)
 		}
 	}
-	for _, obs := range observations {
+	for i, obs := range observations {
+		var conf any
+		if i < len(confidences) {
+			conf = confidences[i]
+		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO memory_observations (entity_id, content) VALUES ($1, $2)`, id, obs,
+			`INSERT INTO memory_observations (entity_id, content, confidence) VALUES ($1, $2, $3)`, id, obs, conf,
 		); err != nil {
 			return err
 		}
@@ -151,56 +160,62 @@ func (r *postgresMemory) DeleteEntities(ctx context.Context, project string, nam
 	return err
 }
 
-func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error) {
+func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, entity_type
+		SELECT id, name, entity_type, avg_conf,
+		       (ts_rank(vec, q) * avg_conf * recency_factor) AS final_score
 		FROM (
 		  SELECT e.id, e.name, e.entity_type,
-		         to_tsvector('simple', e.name || ' ' || coalesce(string_agg(o.content, ' '), '')) AS vec
+		         to_tsvector('simple', e.name || ' ' || coalesce(string_agg(o.content, ' '), '')) AS vec,
+		         COALESCE(avg(COALESCE(o.confidence, 1.0)), 1.0) AS avg_conf,
+		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
 		  FROM memory_entities e
 		  LEFT JOIN memory_observations o ON o.entity_id = e.id
 		  WHERE e.project_id = $1
-		  GROUP BY e.id, e.name, e.entity_type
+		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
 		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
 		WHERE agg.vec @@ q
-		ORDER BY ts_rank(agg.vec, q) DESC
+		ORDER BY (ts_rank(agg.vec, q) * agg.avg_conf * agg.recency_factor) DESC
 		LIMIT $3`, project, query, limit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	type row struct {
-		id   int
-		name string
-		typ  string
+		id      int
+		name    string
+		typ     string
+		avgConf float64
+		score   float64
 	}
 	var found []row
 	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.name, &r.typ); err != nil {
-			return nil, err
+		var rr row
+		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.avgConf, &rr.score); err != nil {
+			return nil, nil, err
 		}
-		found = append(found, r)
+		found = append(found, rr)
 	}
 
 	var results []entity.SearchResult
+	var ids []int
 	for _, rr := range found {
 		obsRows, err := r.pool.Query(ctx,
 			`SELECT content FROM memory_observations WHERE entity_id = $1 ORDER BY created_at`, rr.id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var observations []string
 		for obsRows.Next() {
 			var c string
 			if err := obsRows.Scan(&c); err != nil {
 				obsRows.Close()
-				return nil, err
+				return nil, nil, err
 			}
 			observations = append(observations, c)
 		}
@@ -212,13 +227,13 @@ func (r *postgresMemory) Search(ctx context.Context, project, query string, limi
 			JOIN memory_entities te ON te.id = r.to_entity_id
 			WHERE r.from_entity_id = $1`, rr.id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for outRows.Next() {
 			var relType, toName string
 			if err := outRows.Scan(&relType, &toName); err != nil {
 				outRows.Close()
-				return nil, err
+				return nil, nil, err
 			}
 			relations = append(relations, fmt.Sprintf("%s --%s--> %s", rr.name, relType, toName))
 		}
@@ -229,23 +244,40 @@ func (r *postgresMemory) Search(ctx context.Context, project, query string, limi
 			JOIN memory_entities fe ON fe.id = r.from_entity_id
 			WHERE r.to_entity_id = $1`, rr.id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for inRows.Next() {
 			var relType, fromName string
 			if err := inRows.Scan(&relType, &fromName); err != nil {
 				inRows.Close()
-				return nil, err
+				return nil, nil, err
 			}
 			relations = append(relations, fmt.Sprintf("%s --%s--> %s", fromName, relType, rr.name))
 		}
 		inRows.Close()
 
+		var confPtr *float64
+		if rr.avgConf != 1.0 {
+			c := rr.avgConf
+			confPtr = &c
+		}
 		results = append(results, entity.SearchResult{
 			Name: rr.name, Type: rr.typ, Observations: observations, Relations: relations,
+			Confidence: confPtr, Score: &rr.score,
 		})
+		ids = append(ids, rr.id)
 	}
-	return results, nil
+	return results, ids, nil
+}
+
+// TouchAccessed bumps last_accessed_at for the given entity IDs. Best-effort:
+// the caller (usecase) should ignore errors so a search never fails due to this.
+func (r *postgresMemory) TouchAccessed(ctx context.Context, entityIDs []int) error {
+	if len(entityIDs) == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE memory_entities SET last_accessed_at = now() WHERE id = ANY($1::int[])`, entityIDs)
+	return err
 }
 
 // ReadGraph returns the graph for one project, or all projects when project == "".
@@ -535,11 +567,18 @@ func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, 
 	return nil
 }
 
-func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE memory_observations o SET content = $3
+func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error {
+	confExpr := "o.confidence"
+	var args []any
+	args = append(args, project, id, content)
+	if newConfidence != nil {
+		confExpr = fmt.Sprintf("$%d", len(args)+1)
+		args = append(args, *newConfidence)
+	}
+	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
+		UPDATE memory_observations o SET content = $3, confidence = %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, project, id, content)
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, confExpr), args...)
 	if err != nil {
 		return err
 	}
@@ -578,12 +617,18 @@ func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project
 	return nil
 }
 
-func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE memory_observations o SET content = $4
+func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error {
+	confExpr := "o.confidence"
+	var args []any
+	args = append(args, project, entityName, oldContent, newContent)
+	if newConfidence != nil {
+		confExpr = fmt.Sprintf("$%d", len(args)+1)
+		args = append(args, *newConfidence)
+	}
+	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
+		UPDATE memory_observations o SET content = $4, confidence = %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`,
-		project, entityName, oldContent, newContent)
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`, confExpr), args...)
 	if err != nil {
 		return err
 	}

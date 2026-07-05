@@ -11,9 +11,10 @@ type CreateEntitiesInput struct {
 }
 
 type AddObservationsInput struct {
-	Project      string   `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
-	EntityName   string   `json:"entityName"`
-	Observations []string `json:"observations" jsonschema:"New facts to attach to this entity"`
+	Project      string    `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	EntityName   string    `json:"entityName"`
+	Observations []string  `json:"observations" jsonschema:"New facts to attach to this entity"`
+	Confidences  []float64 `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit/empty = neutral (treated as 1.0)."`
 }
 
 type CreateRelationsInput struct {
@@ -54,10 +55,11 @@ type RenameEntityInput struct {
 }
 
 type UpdateObservationInput struct {
-	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
-	EntityName string `json:"entityName" jsonschema:"Entity the observation belongs to"`
-	OldContent string `json:"oldContent" jsonschema:"Exact current observation text to match"`
-	NewContent string `json:"newContent" jsonschema:"Replacement text"`
+	Project       string   `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	EntityName    string   `json:"entityName" jsonschema:"Entity the observation belongs to"`
+	OldContent    string   `json:"oldContent" jsonschema:"Exact current observation text to match"`
+	NewContent    string   `json:"newContent" jsonschema:"Replacement text"`
+	NewConfidence *float64 `json:"newConfidence,omitempty" jsonschema:"Optional new confidence 0.0-1.0; omit to leave unchanged."`
 }
 
 type DeleteObservationInput struct {

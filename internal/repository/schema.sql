@@ -93,3 +93,12 @@ DROP TRIGGER IF EXISTS trg_touch_entities ON memory_entities;
 CREATE TRIGGER trg_touch_entities
     BEFORE UPDATE ON memory_entities
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- ---- AI Memory Quality (Phase 1) ----
+-- confidence: per-observation AI keyakinan (0.0-1.0, nullable NULL=netral).
+--   Scoring treatas NULL as 1.0 via COALESCE.
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS confidence REAL;
+
+-- last_accessed_at: per-entity decay tracking (nullable NULL=belum pernah di-access,
+--   fallback ke created_at untuk hitung umur). Computed-on-read decay, no scheduler.
+ALTER TABLE memory_entities ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;

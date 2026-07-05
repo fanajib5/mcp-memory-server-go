@@ -13,7 +13,15 @@ func (u *UI) HandleObservationAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.FormValue("p")
-	if err := u.UC.AddObservations(r.Context(), p, r.FormValue("entity"), []string{r.FormValue("content")}); err != nil {
+	// Optional confidence from the UI form (empty = neutral/NULL).
+	var confidences []float64
+	if cf := r.FormValue("confidence"); cf != "" {
+		var c float64
+		if _, err := fmt.Sscanf(cf, "%f", &c); err == nil {
+			confidences = []float64{c}
+		}
+	}
+	if err := u.UC.AddObservations(r.Context(), p, r.FormValue("entity"), []string{r.FormValue("content")}, confidences); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -44,7 +52,9 @@ func (u *UI) HandleObservationEditGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "observation not found", http.StatusNotFound)
 		return
 	}
-	u.renderUIFragment(w, r, "observation_edit", map[string]any{"Project": p, "ID": id, "Content": content, "Entity": ent})
+	u.renderUIFragment(w, r, "observation_edit", map[string]any{
+		"Project": p, "ID": id, "Content": content, "Entity": ent,
+	})
 }
 
 // HandleObservationEditSave updates one observation by id and returns the refreshed list.
@@ -56,7 +66,15 @@ func (u *UI) HandleObservationEditSave(w http.ResponseWriter, r *http.Request) {
 	var id int
 	fmt.Sscanf(r.FormValue("id"), "%d", &id)
 	p := r.FormValue("p")
-	if err := u.UC.UpdateObservation(r.Context(), p, id, r.FormValue("content")); err != nil {
+	// Optional confidence from the UI form (empty = leave unchanged).
+	var newConf *float64
+	if cf := r.FormValue("confidence"); cf != "" {
+		var c float64
+		if _, err := fmt.Sscanf(cf, "%f", &c); err == nil {
+			newConf = &c
+		}
+	}
+	if err := u.UC.UpdateObservation(r.Context(), p, id, r.FormValue("content"), newConf); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

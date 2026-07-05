@@ -2,10 +2,13 @@ package entity
 
 // EntityInput is the normalized domain input for creating/updating an entity.
 // jsonschema tags feed the MCP tool input schema (harmless outside MCP).
+// Confidences is a parallel slice to Observations: confidences[i] applies to
+// Observations[i]. Empty/nil = all observations get NULL confidence (netral).
 type EntityInput struct {
-	Name         string   `json:"name" jsonschema:"Unique entity name within its project, e.g. 'MIS-APAR' or 'Faiq'"`
-	Type         string   `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
-	Observations []string `json:"observations,omitempty" jsonschema:"Facts about this entity"`
+	Name         string    `json:"name" jsonschema:"Unique entity name within its project, e.g. 'MIS-APAR' or 'Faiq'"`
+	Type         string    `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
+	Observations []string  `json:"observations,omitempty" jsonschema:"Facts about this entity"`
+	Confidences  []float64 `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit or empty = neutral."`
 }
 
 // RelationInput is the normalized domain input for creating a directed relation.
@@ -24,11 +27,15 @@ type Entity struct {
 
 // SearchResult is one entity matched by a search, with its observations and
 // relations formatted as "A --R--> B" strings.
+// Confidence is the entity-level average of observation confidences (nil if all neutral).
+// Score is the combined re-rank score (text relevance × confidence × recency) for debugging.
 type SearchResult struct {
 	Name         string   `json:"name"`
 	Type         string   `json:"type"`
 	Observations []string `json:"observations"`
 	Relations    []string `json:"relations"`
+	Confidence   *float64 `json:"confidence,omitempty"`
+	Score        *float64 `json:"score,omitempty"`
 }
 
 // FullGraph is the whole graph for a project (or all projects), with relations
@@ -68,8 +75,9 @@ type ImportResult struct {
 // ---- UI / stats domain models ----
 
 type EntityDetailObservation struct {
-	ID      int    `json:"id"`
-	Content string `json:"content"`
+	ID         int      `json:"id"`
+	Content    string   `json:"content"`
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 type EntityDetailRelation struct {
@@ -87,10 +95,11 @@ type EntityDetail struct {
 }
 
 type EntitySummary struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	ObsCount int    `json:"obsCount"`
-	RelCount int    `json:"relCount"`
+	Name         string  `json:"name"`
+	Type         string  `json:"type"`
+	ObsCount     int     `json:"obsCount"`
+	RelCount     int     `json:"relCount"`
+	LastAccessed *string `json:"lastAccessed,omitempty"` // relative-time string for UI
 }
 
 type DayCount struct {

@@ -34,6 +34,11 @@ td,th{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;font-s
 .obs li span,.rels li span{flex:1}
 button.x{padding:2px 7px;background:transparent;border:none;color:var(--muted)}
 button.x:hover{color:#f66}
+.conf{font-size:11px;padding:1px 5px;border-radius:8px;font-variant-numeric:tabular-nums;white-space:nowrap;flex:0 0 auto!important}
+.conf.high{background:#16331f;color:#5fd17a}
+.conf.mid{background:#332b16;color:#d9b35a}
+.conf.low{background:#331616;color:#f08a8a}
+.conf-input{width:90px}
 .login{max-width:280px;margin:80px auto;text-align:center}
 .login form{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .login input{padding:8px;background:#161a21;color:var(--fg);border:1px solid var(--line);border-radius:4px}
