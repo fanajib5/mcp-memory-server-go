@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcp-memory-server/internal/entity"
+	"mcp-memory-server/internal/event"
 	"mcp-memory-server/internal/gateway"
 	"mcp-memory-server/internal/repository"
 )
@@ -44,12 +45,22 @@ func clampConfidences(c []float64) []float64 {
 type MemoryUseCase struct {
 	repo     repository.MemoryRepository
 	embedder gateway.Embedder // nil = semantic search off
+	bus      *event.Bus       // nil = events disabled
 }
 
 // NewMemoryUseCase wires a usecase to its repository. Pass nil for embedder to
-// disable semantic features (lexical-only mode).
-func NewMemoryUseCase(repo repository.MemoryRepository, embedder gateway.Embedder) *MemoryUseCase {
-	return &MemoryUseCase{repo: repo, embedder: embedder}
+// disable semantic features (lexical-only mode). Pass nil for bus to disable
+// SSE event publishing.
+func NewMemoryUseCase(repo repository.MemoryRepository, embedder gateway.Embedder, bus *event.Bus) *MemoryUseCase {
+	return &MemoryUseCase{repo: repo, embedder: embedder, bus: bus}
+}
+
+// publish emits an event to the bus if configured. No-op when bus is nil.
+func (u *MemoryUseCase) publish(project, entity, eventType string) {
+	if u.bus == nil {
+		return
+	}
+	u.bus.Publish(project, event.Event{Type: eventType, Entity: entity})
 }
 
 // embedTexts is a fail-safe wrapper: embeds texts with a timeout. On any error
@@ -74,18 +85,28 @@ func (u *MemoryUseCase) CreateEntities(ctx context.Context, project string, enti
 	for i := range entities {
 		entities[i].Type = normalizeEntityType(entities[i].Type)
 		entities[i].Confidences = clampConfidences(entities[i].Confidences)
-		// Embed new observations for semantic search (fail-safe: nil on error).
 		if len(entities[i].Observations) > 0 {
 			entities[i].Embeddings = u.embedTexts(ctx, entities[i].Observations)
 		}
 	}
-	return u.repo.CreateEntities(ctx, project, entities)
+	created, err := u.repo.CreateEntities(ctx, project, entities)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range created {
+		u.publish(project, name, "entity_created")
+	}
+	return created, nil
 }
 
 func (u *MemoryUseCase) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error {
 	project = defaultProject(project)
 	embeddings := u.embedTexts(ctx, observations)
-	return u.repo.AddObservations(ctx, project, entityName, observations, clampConfidences(confidences), embeddings)
+	if err := u.repo.AddObservations(ctx, project, entityName, observations, clampConfidences(confidences), embeddings); err != nil {
+		return err
+	}
+	u.publish(project, entityName, "observation_added")
+	return nil
 }
 
 func (u *MemoryUseCase) CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error) {
@@ -96,12 +117,25 @@ func (u *MemoryUseCase) CreateRelations(ctx context.Context, project string, rel
 			return nil, fmt.Errorf("relation has empty type after normalization")
 		}
 	}
-	return u.repo.CreateRelations(ctx, project, relations)
+	created, err := u.repo.CreateRelations(ctx, project, relations)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range relations {
+		u.publish(project, r.From, "relation_created")
+	}
+	return created, nil
 }
 
 func (u *MemoryUseCase) DeleteEntities(ctx context.Context, project string, names []string) error {
 	project = defaultProject(project)
-	return u.repo.DeleteEntities(ctx, project, names)
+	if err := u.repo.DeleteEntities(ctx, project, names); err != nil {
+		return err
+	}
+	for _, name := range names {
+		u.publish(project, name, "entity_deleted")
+	}
+	return nil
 }
 
 // Search runs the query, then best-effort bumps last_accessed_at for every
@@ -160,12 +194,24 @@ func (u *MemoryUseCase) UpdateEntity(ctx context.Context, project, oldName, newN
 		return fmt.Errorf("entity name is required")
 	}
 	et := normalizeEntityType(entityType)
-	return u.repo.UpdateEntity(ctx, project, oldName, newName, et)
+	if err := u.repo.UpdateEntity(ctx, project, oldName, newName, et); err != nil {
+		return err
+	}
+	if newName != oldName {
+		u.publish(project, newName, "entity_renamed")
+	} else {
+		u.publish(project, newName, "entity_type_changed")
+	}
+	return nil
 }
 
 func (u *MemoryUseCase) DeleteObservation(ctx context.Context, project string, id int) error {
 	project = defaultProject(project)
-	return u.repo.DeleteObservation(ctx, project, id)
+	if err := u.repo.DeleteObservation(ctx, project, id); err != nil {
+		return err
+	}
+	u.publish(project, "", "observation_deleted")
+	return nil
 }
 
 func (u *MemoryUseCase) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error {
@@ -183,17 +229,29 @@ func (u *MemoryUseCase) UpdateObservation(ctx context.Context, project string, i
 	if len(emb) > 0 {
 		vec = emb[0]
 	}
-	return u.repo.UpdateObservation(ctx, project, id, content, conf, vec)
+	if err := u.repo.UpdateObservation(ctx, project, id, content, conf, vec); err != nil {
+		return err
+	}
+	u.publish(project, "", "observation_updated")
+	return nil
 }
 
 func (u *MemoryUseCase) DeleteRelation(ctx context.Context, project string, id int) error {
 	project = defaultProject(project)
-	return u.repo.DeleteRelation(ctx, project, id)
+	if err := u.repo.DeleteRelation(ctx, project, id); err != nil {
+		return err
+	}
+	u.publish(project, "", "relation_deleted")
+	return nil
 }
 
 func (u *MemoryUseCase) DeleteObservationByContent(ctx context.Context, project, entityName, content string) error {
 	project = defaultProject(project)
-	return u.repo.DeleteObservationByContent(ctx, project, entityName, content)
+	if err := u.repo.DeleteObservationByContent(ctx, project, entityName, content); err != nil {
+		return err
+	}
+	u.publish(project, entityName, "observation_deleted")
+	return nil
 }
 
 func (u *MemoryUseCase) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error {
@@ -211,7 +269,11 @@ func (u *MemoryUseCase) UpdateObservationByContent(ctx context.Context, project,
 	if len(emb) > 0 {
 		vec = emb[0]
 	}
-	return u.repo.UpdateObservationByContent(ctx, project, entityName, oldContent, newContent, conf, vec)
+	if err := u.repo.UpdateObservationByContent(ctx, project, entityName, oldContent, newContent, conf, vec); err != nil {
+		return err
+	}
+	u.publish(project, entityName, "observation_updated")
+	return nil
 }
 
 func (u *MemoryUseCase) DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error {
@@ -220,7 +282,11 @@ func (u *MemoryUseCase) DeleteRelationByTriple(ctx context.Context, project, fro
 	if relType == "" {
 		return fmt.Errorf("relation type is required")
 	}
-	return u.repo.DeleteRelationByTriple(ctx, project, from, to, relType)
+	if err := u.repo.DeleteRelationByTriple(ctx, project, from, to, relType); err != nil {
+		return err
+	}
+	u.publish(project, from, "relation_deleted")
+	return nil
 }
 
 // GetHistory returns the audit trail for one entity within a project.

@@ -10,9 +10,10 @@ import (
 // NewRouter wires every route onto a single mux and returns it. The MCP stream
 // handler is passed in (built by main from the MCP server); OAuth, UI and
 // session middleware are owned by this package.
-func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService, ui *UI) http.Handler {
+func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService, ui *UI, sse *SSEHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", authMiddleware(cfg, mcpHandler))
+	mux.Handle("/events", authMiddleware(cfg, sse))
 	mux.HandleFunc("/.well-known/oauth-authorization-server", oauth.HandleMetadata)
 	mux.HandleFunc("/oauth/authorize", oauth.HandleAuthorize)
 	mux.HandleFunc("/oauth/token", oauth.HandleToken)

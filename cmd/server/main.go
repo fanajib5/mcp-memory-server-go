@@ -17,6 +17,7 @@ import (
 	"mcp-memory-server/internal/config"
 	httpdelivery "mcp-memory-server/internal/delivery/http"
 	mcpdelivery "mcp-memory-server/internal/delivery/mcp"
+	"mcp-memory-server/internal/event"
 	"mcp-memory-server/internal/gateway"
 	"mcp-memory-server/internal/repository"
 	"mcp-memory-server/internal/usecase"
@@ -54,7 +55,9 @@ func main() {
 		embedder = gateway.NewOllamaClient(cfg.OllamaURL, cfg.OllamaEmbedModel)
 	}
 
-	memUC := usecase.NewMemoryUseCase(memRepo, embedder)
+	bus := event.NewBus()
+
+	memUC := usecase.NewMemoryUseCase(memRepo, embedder, bus)
 	statsUC := usecase.NewStatsUseCase(statsRepo)
 
 	handlers := mcpdelivery.NewHandlers(memUC)
@@ -74,7 +77,9 @@ func main() {
 		Session: httpdelivery.NewSession(cfg),
 	}
 
-	router := httpdelivery.NewRouter(cfg, mcpHandler, oauth, ui)
+	sse := httpdelivery.NewSSEHandler(bus)
+
+	router := httpdelivery.NewRouter(cfg, mcpHandler, oauth, ui, sse)
 
 	// Graceful shutdown context.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
