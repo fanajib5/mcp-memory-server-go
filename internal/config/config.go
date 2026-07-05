@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -23,6 +24,10 @@ type Config struct {
 	CORSAllowedOrigins string
 	OllamaURL          string // OLLAMA_URL, empty = semantic search off
 	OllamaEmbedModel   string // OLLAMA_EMBED_MODEL
+	BackupCron         string // BACKUP_CRON, empty = auto-backup disabled
+	BackupDir          string // BACKUP_DIR
+	BackupRetention    int    // BACKUP_RETENTION (file count)
+	BackupOnStart      bool   // BACKUP_ON_START
 }
 
 // Load reads and validates environment variables, applying the fallback chain
@@ -87,6 +92,21 @@ func Load() *Config {
 		log.Printf("OLLAMA_URL not set — semantic search disabled (lexical-only)")
 	}
 
+	backupCron := os.Getenv("BACKUP_CRON")
+	backupDir := os.Getenv("BACKUP_DIR")
+	if backupDir == "" {
+		backupDir = "/data/backups"
+	}
+	backupRetention := 7
+	if v := os.Getenv("BACKUP_RETENTION"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			backupRetention = n
+		}
+	}
+	if backupCron != "" {
+		log.Printf("auto-backup enabled: cron=%s dir=%s retention=%d", backupCron, backupDir, backupRetention)
+	}
+
 	return &Config{
 		DatabaseURL:        dbURL,
 		Port:               port,
@@ -100,6 +120,10 @@ func Load() *Config {
 		CORSAllowedOrigins: os.Getenv("CORS_ALLOWED_ORIGINS"),
 		OllamaURL:          ollamaURL,
 		OllamaEmbedModel:   ollamaModel,
+		BackupCron:         backupCron,
+		BackupDir:          backupDir,
+		BackupRetention:    backupRetention,
+		BackupOnStart:      os.Getenv("BACKUP_ON_START") == "true",
 	}
 }
 

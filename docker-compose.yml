@@ -29,10 +29,16 @@ services:
       MEMORY_API_TOKEN: local-dev-token-change-me
       OLLAMA_URL: http://ollama:11434
       OLLAMA_EMBED_MODEL: nomic-embed-text
+      BACKUP_CRON: "@daily"
+      BACKUP_DIR: /data/backups
+      BACKUP_RETENTION: "7"
       PORT: 3000
+    volumes:
+      - mcp_backup_data:/data/backups
     ports:
       - "3000:3000"
 
 volumes:
   memory_db_data:
   ollama_data:
+  mcp_backup_data:

@@ -5,11 +5,15 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/joho/godotenv/autoload"
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"mcp-memory-server/internal/backup"
 	"mcp-memory-server/internal/config"
 	httpdelivery "mcp-memory-server/internal/delivery/http"
 	mcpdelivery "mcp-memory-server/internal/delivery/mcp"
@@ -72,10 +76,29 @@ func main() {
 
 	router := httpdelivery.NewRouter(cfg, mcpHandler, oauth, ui)
 
-	log.Printf("mcp-memory-server listening on :%s (%s)", cfg.Port, cfg.Describe())
-	if err := http.ListenAndServe(":"+cfg.Port, router); err != nil {
-		log.Fatal(err)
-	}
+	// Graceful shutdown context.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Auto-backup scheduler (no-op if BACKUP_CRON empty).
+	scheduler := backup.NewScheduler(memUC, cfg.BackupDir, cfg.BackupRetention, cfg.BackupCron)
+	go scheduler.Start(ctx, cfg.BackupOnStart)
+
+	httpServer := &http.Server{Addr: ":" + cfg.Port, Handler: router}
+
+	go func() {
+		log.Printf("mcp-memory-server listening on :%s (%s)", cfg.Port, cfg.Describe())
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Printf("shutting down...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	httpServer.Shutdown(shutdownCtx)
+	log.Printf("stopped")
 }
 
 // runBackfill iterates all observations with NULL embedding, embeds them in
