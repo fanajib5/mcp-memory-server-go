@@ -102,3 +102,17 @@ ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS confidence REAL;
 -- last_accessed_at: per-entity decay tracking (nullable NULL=belum pernah di-access,
 --   fallback ke created_at untuk hitung umur). Computed-on-read decay, no scheduler.
 ALTER TABLE memory_entities ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;
+
+-- ---- AI Memory Quality (Phase 2: pgvector semantic search) ----
+-- Requires the pgvector extension (image: pgvector/pgvector:pg17).
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- embedding: per-observation semantic vector (nullable NULL=belum di-embed/backfill).
+--   Semantic path ignores NULL rows; lexical path unaffected.
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS embedding vector(768);
+
+-- ivfflat approximate nearest-neighbor index for fast cosine search.
+-- lists=100 suits small-to-medium datasets; re-build if rows > 100k.
+CREATE INDEX IF NOT EXISTS idx_observations_embedding
+    ON memory_observations USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);

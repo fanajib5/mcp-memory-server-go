@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"mcp-memory-server/internal/gateway"
 	"mcp-memory-server/internal/repository"
 )
 
@@ -20,6 +21,12 @@ type testHarness struct {
 }
 
 func newTestHarness(t *testing.T) *testHarness {
+	return newTestHarnessWithEmbedder(t, nil)
+}
+
+// newTestHarnessWithEmbedder builds a harness with a custom embedder (for
+// semantic search tests). nil embedder = lexical-only mode.
+func newTestHarnessWithEmbedder(t *testing.T, emb gateway.Embedder) *testHarness {
 	t.Helper()
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Skip("DATABASE_URL not set; skipping integration test")
@@ -36,7 +43,7 @@ func newTestHarness(t *testing.T) *testHarness {
 		t.Fatalf("clean: %v", err)
 	}
 	return &testHarness{
-		mem:   NewMemoryUseCase(repository.NewMemoryRepository(pool)),
+		mem:   NewMemoryUseCase(repository.NewMemoryRepository(pool), emb),
 		stats: NewStatsUseCase(repository.NewStatsRepository(pool)),
 		pool:  pool,
 	}

@@ -5,10 +5,11 @@ package entity
 // Confidences is a parallel slice to Observations: confidences[i] applies to
 // Observations[i]. Empty/nil = all observations get NULL confidence (netral).
 type EntityInput struct {
-	Name         string    `json:"name" jsonschema:"Unique entity name within its project, e.g. 'MIS-APAR' or 'Faiq'"`
-	Type         string    `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
-	Observations []string  `json:"observations,omitempty" jsonschema:"Facts about this entity"`
-	Confidences  []float64 `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit or empty = neutral."`
+	Name         string      `json:"name" jsonschema:"Unique entity name within its project, e.g. 'MIS-APAR' or 'Faiq'"`
+	Type         string      `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
+	Observations []string    `json:"observations,omitempty" jsonschema:"Facts about this entity"`
+	Confidences  []float64   `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit or empty = neutral."`
+	Embeddings   [][]float32 `json:"-"` // internal: populated by usecase embedder, never from MCP input
 }
 
 // RelationInput is the normalized domain input for creating a directed relation.

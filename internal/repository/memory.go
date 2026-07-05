@@ -3,30 +3,47 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"mcp-memory-server/internal/entity"
 )
 
+// vecLiteral formats a float32 slice as a pgvector string literal: [v1,v2,...].
+// Used for both INSERT (embedding column) and query vectors in cosine search.
+func vecLiteral(v []float32) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, f := range v {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.FormatFloat(float64(f), 'f', -1, 32))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 // MemoryRepository is the data-access boundary for the knowledge graph.
 // Implementations receive already-normalized values (project non-empty, entity
 // types/relation types normalized) — domain rules live in the usecase layer.
 type MemoryRepository interface {
 	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error)
-	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error
+	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32) error
 	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
 	DeleteEntities(ctx context.Context, project string, names []string) error
-	Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error)
+	Search(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error)
 	ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error)
 	Export(ctx context.Context, project string) (*entity.ExportPayload, error)
 	Import(ctx context.Context, project string, g *entity.ExportPayload) (*entity.ImportResult, error)
 	UpdateEntity(ctx context.Context, project, oldName, newName, entityType string) error
 	DeleteObservation(ctx context.Context, project string, id int) error
-	UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error
+	UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64, newEmbedding []float32) error
 	DeleteRelation(ctx context.Context, project string, id int) error
 	DeleteObservationByContent(ctx context.Context, project, entityName, content string) error
-	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error
+	UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64, newEmbedding []float32) error
 	DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error
 	TouchAccessed(ctx context.Context, entityIDs []int) error
 }
@@ -65,8 +82,13 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 			if i < len(e.Confidences) {
 				conf = e.Confidences[i]
 			}
+			var emb any
+			if i < len(e.Embeddings) {
+				emb = vecLiteral(e.Embeddings[i])
+			}
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO memory_observations (entity_id, content, confidence) VALUES ($1, $2, $3)`, id, obs, conf,
+				`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector)`,
+				id, obs, conf, emb,
 			); err != nil {
 				return nil, fmt.Errorf("add observation to %q: %w", e.Name, err)
 			}
@@ -76,7 +98,7 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 	return created, tx.Commit(ctx)
 }
 
-func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error {
+func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -98,8 +120,13 @@ func (r *postgresMemory) AddObservations(ctx context.Context, project, entityNam
 		if i < len(confidences) {
 			conf = confidences[i]
 		}
+		var emb any
+		if i < len(embeddings) {
+			emb = vecLiteral(embeddings[i])
+		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO memory_observations (entity_id, content, confidence) VALUES ($1, $2, $3)`, id, obs, conf,
+			`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector)`,
+			id, obs, conf, emb,
 		); err != nil {
 			return err
 		}
@@ -160,10 +187,18 @@ func (r *postgresMemory) DeleteEntities(ctx context.Context, project string, nam
 	return err
 }
 
-func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error) {
+func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
+	if queryVec != nil {
+		return r.searchHybrid(ctx, project, query, limit, queryVec)
+	}
+	return r.searchLexical(ctx, project, query, limit)
+}
+
+// searchLexical is the Phase 1 path: ts_rank × avg_conf × recency. No semantic.
+func (r *postgresMemory) searchLexical(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, name, entity_type, avg_conf,
 		       (ts_rank(vec, q) * avg_conf * recency_factor) AS final_score
@@ -186,22 +221,73 @@ func (r *postgresMemory) Search(ctx context.Context, project, query string, limi
 	}
 	defer rows.Close()
 
-	type row struct {
-		id      int
-		name    string
-		typ     string
-		avgConf float64
-		score   float64
-	}
-	var found []row
+	var found []searchRow
 	for rows.Next() {
-		var rr row
+		var rr searchRow
+		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.avgConf, &rr.score); err != nil {
+			return nil, nil, err
+		}
+		found = append(found, rr)
+	}
+	return r.fetchResults(ctx, found)
+}
+
+// searchHybrid fuses lexical (ts_rank, weight 0.3) and semantic (cosine, weight 0.7).
+// Semantic candidates come from ivfflat ANN top-K per observation (cosine sim >= 0.2).
+// Entities match via either path; final_score = hybrid × avg_conf × recency.
+func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error) {
+	vecStr := vecLiteral(queryVec)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, name, entity_type, avg_conf,
+		       (ts_rank(agg.vec, q) * 0.3 + COALESCE(sem.sem_score, 0) * 0.7) * agg.avg_conf * agg.recency_factor AS final_score
+		FROM (
+		  SELECT e.id, e.name, e.entity_type,
+		         to_tsvector('simple', e.name || ' ' || coalesce(string_agg(o.content, ' '), '')) AS vec,
+		         COALESCE(avg(COALESCE(o.confidence, 1.0)), 1.0) AS avg_conf,
+		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
+		  FROM memory_entities e
+		  LEFT JOIN memory_observations o ON o.entity_id = e.id
+		  WHERE e.project_id = $1
+		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
+		) agg
+		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		LEFT JOIN LATERAL (
+		  SELECT max(1 - (o2.embedding <=> $3::vector)) AS sem_score
+		  FROM memory_observations o2
+		  WHERE o2.entity_id = agg.id AND o2.embedding IS NOT NULL
+		) sem ON sem.sem_score >= 0.2
+		WHERE agg.vec @@ q OR sem.sem_score IS NOT NULL
+		ORDER BY (ts_rank(agg.vec, q) * 0.3 + COALESCE(sem.sem_score, 0) * 0.7) * agg.avg_conf * agg.recency_factor DESC
+		LIMIT $4`, project, query, vecStr, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var found []searchRow
+	for rows.Next() {
+		var rr searchRow
 		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.avgConf, &rr.score); err != nil {
 			return nil, nil, err
 		}
 		found = append(found, rr)
 	}
 
+	return r.fetchResults(ctx, found)
+}
+
+// searchRow holds per-entity scoring data from the search CTE.
+type searchRow struct {
+	id      int
+	name    string
+	typ     string
+	avgConf float64
+	score   float64
+}
+
+// fetchResults loads observations + relations for each matched entity row and
+// builds SearchResult + id slices. Shared by lexical and hybrid search paths.
+func (r *postgresMemory) fetchResults(ctx context.Context, found []searchRow) ([]entity.SearchResult, []int, error) {
 	var results []entity.SearchResult
 	var ids []int
 	for _, rr := range found {
@@ -567,18 +653,23 @@ func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, 
 	return nil
 }
 
-func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64) error {
+func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, id int, content string, newConfidence *float64, newEmbedding []float32) error {
 	confExpr := "o.confidence"
+	embExpr := "o.embedding"
 	var args []any
 	args = append(args, project, id, content)
 	if newConfidence != nil {
 		confExpr = fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
 	}
+	if newEmbedding != nil {
+		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
+		args = append(args, vecLiteral(newEmbedding))
+	}
 	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
-		UPDATE memory_observations o SET content = $3, confidence = %s
+		UPDATE memory_observations o SET content = $3, confidence = %s, embedding = %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, confExpr), args...)
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND o.id = $2`, confExpr, embExpr), args...)
 	if err != nil {
 		return err
 	}
@@ -617,18 +708,23 @@ func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project
 	return nil
 }
 
-func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64) error {
+func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project, entityName, oldContent, newContent string, newConfidence *float64, newEmbedding []float32) error {
 	confExpr := "o.confidence"
+	embExpr := "o.embedding"
 	var args []any
 	args = append(args, project, entityName, oldContent, newContent)
 	if newConfidence != nil {
 		confExpr = fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
 	}
+	if newEmbedding != nil {
+		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
+		args = append(args, vecLiteral(newEmbedding))
+	}
 	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`
-		UPDATE memory_observations o SET content = $4, confidence = %s
+		UPDATE memory_observations o SET content = $4, confidence = %s, embedding = %s
 		FROM memory_entities e
-		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`, confExpr), args...)
+		WHERE o.entity_id = e.id AND e.project_id = $1 AND e.name = $2 AND o.content = $3`, confExpr, embExpr), args...)
 	if err != nil {
 		return err
 	}

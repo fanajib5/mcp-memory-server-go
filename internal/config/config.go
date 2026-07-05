@@ -21,6 +21,8 @@ type Config struct {
 	CookieInsecure     bool
 	PublicURL          string
 	CORSAllowedOrigins string
+	OllamaURL          string // OLLAMA_URL, empty = semantic search off
+	OllamaEmbedModel   string // OLLAMA_EMBED_MODEL
 }
 
 // Load reads and validates environment variables, applying the fallback chain
@@ -74,6 +76,17 @@ func Load() *Config {
 		log.Printf("WARNING: PUBLIC_URL not set, defaulting to %s. Set PUBLIC_URL in Coolify/deploy so OAuth metadata uses your real public domain.", publicURL)
 	}
 
+	ollamaURL := os.Getenv("OLLAMA_URL")
+	ollamaModel := os.Getenv("OLLAMA_EMBED_MODEL")
+	if ollamaModel == "" {
+		ollamaModel = "nomic-embed-text"
+	}
+	if ollamaURL != "" {
+		log.Printf("semantic search enabled: ollama=%s model=%s", ollamaURL, ollamaModel)
+	} else {
+		log.Printf("OLLAMA_URL not set — semantic search disabled (lexical-only)")
+	}
+
 	return &Config{
 		DatabaseURL:        dbURL,
 		Port:               port,
@@ -85,6 +98,8 @@ func Load() *Config {
 		CookieInsecure:     os.Getenv("UI_COOKIE_INSECURE") == "true",
 		PublicURL:          publicURL,
 		CORSAllowedOrigins: os.Getenv("CORS_ALLOWED_ORIGINS"),
+		OllamaURL:          ollamaURL,
+		OllamaEmbedModel:   ollamaModel,
 	}
 }
 
