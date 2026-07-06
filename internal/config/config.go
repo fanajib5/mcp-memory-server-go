@@ -84,7 +84,7 @@ func Load() *Config {
 	ollamaURL := os.Getenv("OLLAMA_URL")
 	ollamaModel := os.Getenv("OLLAMA_EMBED_MODEL")
 	if ollamaModel == "" {
-		ollamaModel = "nomic-embed-text"
+		ollamaModel = "bge-m3"
 	}
 	if ollamaURL != "" {
 		log.Printf("semantic search enabled: ollama=%s model=%s", ollamaURL, ollamaModel)

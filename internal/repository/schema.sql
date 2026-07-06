@@ -109,7 +109,27 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 -- embedding: per-observation semantic vector (nullable NULL=belum di-embed/backfill).
 --   Semantic path ignores NULL rows; lexical path unaffected.
-ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS embedding vector(768);
+--   Dimension 1024 matches the default model bge-m3.
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS embedding vector(1024);
+
+-- Resize existing embedding columns to 1024 (e.g. legacy installs created at
+-- 768-dim for nomic-embed-text). Old vectors are model-specific and cannot be
+-- converted, so they are NULLed first; the index is dropped because ALTER COLUMN
+-- TYPE rebuilds it and the old index was dimension-specific. Re-embed afterward
+-- with: mcp-memory-server -backfill-embeddings
+DO $$
+DECLARE cur_type text;
+BEGIN
+    SELECT format_type(a.atttypid, a.atttypmod) INTO cur_type
+    FROM pg_attribute a
+    WHERE a.attrelid = 'memory_observations'::regclass
+      AND a.attname = 'embedding';
+    IF cur_type IS NOT NULL AND cur_type <> 'vector(1024)' THEN
+        DROP INDEX IF EXISTS idx_observations_embedding;
+        UPDATE memory_observations SET embedding = NULL;
+        ALTER TABLE memory_observations ALTER COLUMN embedding TYPE vector(1024);
+    END IF;
+END $$;
 
 -- ivfflat approximate nearest-neighbor index for fast cosine search.
 -- lists=100 suits small-to-medium datasets; re-build if rows > 100k.

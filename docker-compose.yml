@@ -16,12 +16,12 @@ services:
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
-    # Model is pulled on first use; pre-pull via: docker compose exec ollama ollama pull nomic-embed-text
+    # Model is pulled on first use; pre-pull via: docker compose exec ollama ollama pull bge-m3
     healthcheck:
       test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 30s
+      retries: 10
 
   mcp-memory:
     build: .
@@ -35,7 +35,7 @@ services:
       DATABASE_URL: postgres://memory:memory_local_dev_password@db:5432/memory
       MEMORY_API_TOKEN: local-dev-token-change-me
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_EMBED_MODEL: nomic-embed-text
+      OLLAMA_EMBED_MODEL: bge-m3
       BACKUP_CRON: "@daily"
       BACKUP_DIR: /data/backups
       BACKUP_RETENTION: "7"

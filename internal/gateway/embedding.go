@@ -25,8 +25,8 @@ type Embedder interface {
 }
 
 // EmbeddingDim is the vector dimensionality produced by the default model
-// (nomic-embed-text). Schema vector(N) must match this.
-const EmbeddingDim = 768
+// (bge-m3). Schema vector(N) must match this.
+const EmbeddingDim = 1024
 
 // ollamaRequest is the JSON body for POST /api/embed.
 type ollamaRequest struct {
@@ -50,7 +50,7 @@ type OllamaClient struct {
 }
 
 // NewOllamaClient builds an embedder against baseURL (e.g. "http://ollama:11434")
-// using model (e.g. "nomic-embed-text"). The HTTP client has a generous default
+// using model (e.g. "bge-m3"). The HTTP client has a generous default
 // timeout; per-call deadlines should be set via the context.
 func NewOllamaClient(baseURL, model string) *OllamaClient {
 	return &OllamaClient{

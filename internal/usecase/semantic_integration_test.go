@@ -9,7 +9,7 @@ import (
 	"mcp-memory-server/internal/gateway"
 )
 
-// hashEmbedder produces a deterministic 768-dim vector from text via FNV hash.
+// hashEmbedder produces a deterministic 1024-dim vector from text via FNV hash.
 // Texts with similar words hash to similar-ish buckets — not real semantics,
 // but deterministic and sufficient to verify the embedding storage + hybrid
 // query path runs without error.
