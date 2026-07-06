@@ -17,13 +17,20 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     # Model is pulled on first use; pre-pull via: docker compose exec ollama ollama pull nomic-embed-text
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   mcp-memory:
     build: .
     restart: unless-stopped
     depends_on:
-      - db
-      - ollama
+      ollama:
+        condition: service_healthy
+      db:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://memory:memory_local_dev_password@db:5432/memory
       MEMORY_API_TOKEN: local-dev-token-change-me
@@ -35,8 +42,8 @@ services:
       PORT: 3000
     volumes:
       - mcp_backup_data:/data/backups
-    ports:
-      - "3000:3000"
+    # ports:
+    #   - "3000:3000"
 
 volumes:
   memory_db_data:
