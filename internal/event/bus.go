@@ -1,3 +1,8 @@
+// mcp-memory-server-go - Personal Knowledge Graph MCP Server
+// Copyright (C) 2026  Faiq Najib
+//
+// SPDX-License-Identifier: GPL-2.0-only
+
 // Package event provides a lightweight in-memory pub/sub event bus for
 // cross-agent memory change notifications. Designed for single-container
 // deployments (tool personal). Not suitable for multi-container scaling
