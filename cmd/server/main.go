@@ -60,6 +60,12 @@ func main() {
 	memUC := usecase.NewMemoryUseCase(memRepo, embedder, bus)
 	statsUC := usecase.NewStatsUseCase(statsRepo)
 
+	// LLM client: Kilo Gateway (or Ollama-compatible). Only wired if API key is set.
+	var llmClient gateway.LLMClient
+	llmClient = gateway.NewKiloGatewayClient(cfg.KiloGatewayBaseURL, cfg.KiloGatewayAPIKey, cfg.KiloGatewayModel)
+
+	chatUC := usecase.NewChatUseCase(llmClient, memUC)
+
 	handlers := mcpdelivery.NewHandlers(memUC)
 	server := mcpdelivery.BuildServer(handlers)
 	mcpHandler := mcpgo.NewStreamableHTTPHandler(
@@ -75,6 +81,7 @@ func main() {
 		SU:      statsUC,
 		Tmpl:    tmpl,
 		Session: httpdelivery.NewSession(cfg),
+		Chat:    httpdelivery.NewChatHandler(chatUC),
 	}
 
 	sse := httpdelivery.NewSSEHandler(bus)

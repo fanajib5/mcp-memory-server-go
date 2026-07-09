@@ -28,6 +28,10 @@ type Config struct {
 	BackupDir          string // BACKUP_DIR
 	BackupRetention    int    // BACKUP_RETENTION (file count)
 	BackupOnStart      bool   // BACKUP_ON_START
+
+	KiloGatewayAPIKey  string // KILO_GATEWAY_API_KEY, empty = LLM chat disabled
+	KiloGatewayBaseURL string // KILO_GATEWAY_BASE_URL, default https://gateway.kilo.ai
+	KiloGatewayModel   string // KILO_GATEWAY_DEFAULT_MODEL, default claude-sonnet-4-20250514
 }
 
 // Load reads and validates environment variables, applying the fallback chain
@@ -107,6 +111,21 @@ func Load() *Config {
 		log.Printf("auto-backup enabled: cron=%s dir=%s retention=%d", backupCron, backupDir, backupRetention)
 	}
 
+	kiloKey := os.Getenv("KILO_GATEWAY_API_KEY")
+	kiloBase := os.Getenv("KILO_GATEWAY_BASE_URL")
+	if kiloBase == "" {
+		kiloBase = "https://gateway.kilo.ai"
+	}
+	kiloModel := os.Getenv("KILO_GATEWAY_DEFAULT_MODEL")
+	if kiloModel == "" {
+		kiloModel = "claude-sonnet-4-20250514"
+	}
+	if kiloKey != "" {
+		log.Printf("LLM chat enabled: gateway=%s model=%s", kiloBase, kiloModel)
+	} else {
+		log.Printf("KILO_GATEWAY_API_KEY not set — LLM chat disabled")
+	}
+
 	return &Config{
 		DatabaseURL:        dbURL,
 		Port:               port,
@@ -124,6 +143,9 @@ func Load() *Config {
 		BackupDir:          backupDir,
 		BackupRetention:    backupRetention,
 		BackupOnStart:      os.Getenv("BACKUP_ON_START") == "true",
+		KiloGatewayAPIKey:  kiloKey,
+		KiloGatewayBaseURL: kiloBase,
+		KiloGatewayModel:   kiloModel,
 	}
 }
 

@@ -1,0 +1,93 @@
+{{define "chat"}}
+{{$p := .Project}}
+{{$history := .History}}
+{{$models := .Models}}
+{{$disabled := .Disabled}}
+<!doctype html>
+<html lang="id">
+<head>{{template "head"}}</head>
+<body>
+{{template "nav" .}}
+<main class="wrap chat-layout">
+  <h1>Chat with Memory LLM</h1>
+
+  {{if $disabled}}
+  <div class="chat-disabled">
+    <p>LLM chat is disabled.</p>
+    <p>Set <code>KILO_GATEWAY_API_KEY</code> environment variable and restart the server.</p>
+    <p>Alternatively, set <code>KILO_GATEWAY_BASE_URL</code> (default: https://gateway.kilo.ai)
+       and <code>KILO_GATEWAY_DEFAULT_MODEL</code> (default: claude-sonnet-4-20250514).</p>
+  </div>
+  {{else}}
+
+  <div class="chat-controls">
+    <form method="post" action="/ui/chat/clear" class="inline-form">
+      {{template "csrf_field" .}}
+      <input type="hidden" name="p" value="{{$p}}">
+      <button class="btn-clear" onclick="return confirm('Clear conversation history?')">Clear</button>
+    </form>
+    <select id="model-select" name="model" form="chat-form">
+      {{range $models}}<option value="{{.}}">{{.}}</option>{{end}}
+    </select>
+  </div>
+
+  <div id="chat-box" class="chat-box">
+    {{template "chat_messages" .}}
+  </div>
+
+  <form id="chat-form" method="post" action="/ui/chat/send"
+        hx-post="/ui/chat/send"
+        hx-target="#chat-box"
+        hx-swap="innerHTML"
+        hx-indicator="#chat-spinner"
+        class="chat-input">
+    {{template "csrf_field" .}}
+    <input type="hidden" name="p" value="{{$p}}">
+    <input type="hidden" name="model" id="model-hidden" value="">
+    <input type="text" name="message" placeholder="Ask about memories or manage the knowledge graph..." required autofocus>
+    <button type="submit">Send</button>
+    <span id="chat-spinner" class="htmx-indicator spinner"></span>
+  </form>
+  {{end}}
+</main>
+<script>
+  (function() {
+    var sel = document.getElementById('model-select');
+    var hid = document.getElementById('model-hidden');
+    if (sel && hid) {
+      sel.addEventListener('change', function() { hid.value = this.value; });
+      hid.value = sel.value;
+    }
+    var box = document.getElementById('chat-box');
+    if (box) box.scrollTop = box.scrollHeight;
+  })();
+</script>
+</body>
+</html>
+{{end}}
+
+{{define "chat_messages"}}
+<div class="chat-msgs">
+  {{range .History}}
+    <div class="msg msg-{{.Role}}">
+      <div class="msg-header">{{if eq .Role "user"}}You{{else}}AI{{end}}</div>
+      <div class="msg-body">{{.Content}}</div>
+    </div>
+  {{else}}
+    <div class="msg-empty">
+      <p>Knowledge graph memory assistant.</p>
+      <p class="muted">Try: "search for project X", "show me the graph", "create an entity for Y", "add observations to Z"</p>
+    </div>
+  {{end}}
+</div>
+{{end}}
+
+{{define "chat_error"}}
+<div id="chat-box" class="chat-box">
+  <div class="msg msg-error">
+    <div class="msg-header">Error</div>
+    <div class="msg-body">{{.Error}}</div>
+  </div>
+  <button hx-get="/ui/chat?p={{.Project}}" hx-target="body" hx-swap="innerHTML">Retry</button>
+</div>
+{{end}}

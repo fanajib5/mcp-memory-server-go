@@ -56,3 +56,31 @@ button.x:hover{color:#f66}
 .muted{color:var(--muted);font-size:13px}
 .warn{color:var(--warn)}
 .ok{color:#6f6}
+
+.chat-layout{max-width:900px}
+.chat-disabled{background:#161a21;border:1px solid var(--line);border-radius:8px;padding:20px;text-align:center}
+.chat-disabled code{background:#0f1115;padding:2px 6px;border-radius:3px;font-size:13px}
+.chat-controls{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:10px 0}
+.chat-controls select{padding:6px 8px;background:#0f1115;color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit;max-width:400px}
+.btn-clear{padding:4px 10px;border:1px solid #5a2a2a;background:transparent;color:var(--warn);border-radius:4px;cursor:pointer;font-size:12px}
+.btn-clear:hover{background:#2a1a1a}
+.chat-box{height:55vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px;background:#0b0d12;padding:12px;margin:10px 0;display:flex;flex-direction:column}
+.chat-msgs{display:flex;flex-direction:column;gap:8px}
+.msg{max-width:85%;padding:10px 12px;border-radius:8px;font-size:14px;line-height:1.5}
+.msg-user{align-self:flex-end;background:#1a2744;border:1px solid #2a3a5a}
+.msg-assistant{align-self:flex-start;background:#161a21;border:1px solid var(--line)}
+.msg-error{align-self:center;background:#331616;border:1px solid #5a2a2a;max-width:100%;text-align:center}
+.msg-header{font-size:11px;color:var(--muted);margin-bottom:4px}
+.msg-body{white-space:pre-wrap;word-break:break-word}
+.msg-body p{margin:4px 0}
+.msg-empty{text-align:center;color:var(--muted);padding:40px 20px;align-self:center}
+.chat-input{display:flex;gap:8px;align-items:center}
+.chat-input input[type=text]{flex:1;padding:10px 12px;background:#0f1115;color:var(--fg);border:1px solid var(--line);border-radius:8px;font:inherit}
+.chat-input input[type=text]:focus{outline:none;border-color:var(--accent)}
+.chat-input button{padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font:inherit;font-weight:600}
+.chat-input button:hover{opacity:.9}
+.spinner{width:20px;height:20px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;display:inline-block}
+.spinner.htmx-indicator{opacity:0;transition:opacity .2s}
+.spinner.htmx-request{opacity:1}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{animation:spin .8s linear infinite}
