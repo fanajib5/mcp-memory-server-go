@@ -77,6 +77,10 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 			).Scan(&id); err != nil {
 				return nil, fmt.Errorf("create entity %q: %w", e.Name, err)
 			}
+		} else if strings.TrimSpace(e.Type) != "" {
+			if _, err := tx.Exec(ctx, `UPDATE memory_entities SET entity_type = $1 WHERE id = $2`, e.Type, id); err != nil {
+				return nil, fmt.Errorf("update entity type %q: %w", e.Name, err)
+			}
 		}
 		for i, obs := range e.Observations {
 			var conf any
@@ -213,7 +217,7 @@ func (r *postgresMemory) searchLexical(ctx context.Context, project, query strin
 		  WHERE e.project_id = $1
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
-		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		CROSS JOIN plainto_tsquery('simple', regexp_replace($2, '\\W+', ' ', 'g')) AS q
 		WHERE agg.vec @@ q
 		ORDER BY (ts_rank(agg.vec, q) * agg.avg_conf * agg.recency_factor) DESC
 		LIMIT $3`, project, query, limit)
@@ -251,7 +255,7 @@ func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string
 		  WHERE e.project_id = $1
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
-		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		CROSS JOIN plainto_tsquery('simple', regexp_replace($2, '\\W+', ' ', 'g')) AS q
 		LEFT JOIN LATERAL (
 		  SELECT max(1 - (o2.embedding <=> $3::vector)) AS sem_score
 		  FROM memory_observations o2
