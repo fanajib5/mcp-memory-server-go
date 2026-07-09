@@ -5,7 +5,9 @@
 {{$disabled := .Disabled}}
 <!doctype html>
 <html lang="id">
-<head>{{template "head"}}</head>
+<head>{{template "head"}}
+<script src="/static/marked.min.js"></script>
+</head>
 <body>
 {{template "nav" .}}
 <main class="wrap chat-layout">
@@ -60,6 +62,18 @@
     }
     var box = document.getElementById('chat-box');
     if (box) box.scrollTop = box.scrollHeight;
+
+    function renderMarkdown() {
+      var bodies = document.querySelectorAll('.msg-body');
+      for (var i = 0; i < bodies.length; i++) {
+        var el = bodies[i];
+        var raw = el.textContent;
+        el.innerHTML = marked.parse(raw);
+      }
+    }
+
+    renderMarkdown();
+    document.body.addEventListener('htmx:afterSwap', renderMarkdown);
   })();
 </script>
 </body>
