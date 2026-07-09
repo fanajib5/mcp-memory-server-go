@@ -1,3 +1,8 @@
+// mcp-memory-server-go - Personal Knowledge Graph MCP Server
+// Copyright (C) 2026  Faiq Najib
+//
+// SPDX-License-Identifier: GPL-2.0-only
+
 // Package gateway isolates external service integrations (embedding models,
 // future cloud backup, etc.) behind small interfaces so the rest of the app
 // depends on abstractions, not concrete clients.
