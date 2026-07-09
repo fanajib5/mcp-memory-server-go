@@ -170,8 +170,8 @@ func toolDefinitions() []gateway.ToolDefinition {
 			Parameters: gateway.ToolParamSchema{
 				Type: "object",
 				Properties: map[string]gateway.ToolParamProp{
-					"id":           {Type: "integer", Description: "Observation database ID"},
-					"content":      {Type: "string", Description: "New content text"},
+					"id":            {Type: "integer", Description: "Observation database ID"},
+					"content":       {Type: "string", Description: "New content text"},
 					"newConfidence": {Type: "number", Description: "Optional new confidence 0.0-1.0"},
 				},
 				Required: []string{"id", "content"},

@@ -13,8 +13,8 @@ import (
 const chatSessionCookie = "mem_chat_session"
 
 type ChatHandler struct {
-	uc       *usecase.ChatUseCase
-	nextID   atomic.Int64
+	uc     *usecase.ChatUseCase
+	nextID atomic.Int64
 }
 
 func NewChatHandler(uc *usecase.ChatUseCase) *ChatHandler {

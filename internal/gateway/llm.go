@@ -13,9 +13,9 @@ import (
 )
 
 type ToolParamSchema struct {
-	Type       string                     `json:"type"`
-	Properties map[string]ToolParamProp   `json:"properties,omitempty"`
-	Required   []string                   `json:"required,omitempty"`
+	Type       string                   `json:"type"`
+	Properties map[string]ToolParamProp `json:"properties,omitempty"`
+	Required   []string                 `json:"required,omitempty"`
 }
 
 type ToolParamProp struct {
@@ -31,17 +31,17 @@ type ToolDefinition struct {
 }
 
 type ChatMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	ToolCalls  []ToolCall       `json:"tool_calls,omitempty"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ToolCall struct {
-	ID       string        `json:"id"`
-	Type     string        `json:"type"`
-	Function ToolCallFunc  `json:"function"`
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function ToolCallFunc `json:"function"`
 }
 
 type ToolCallFunc struct {
@@ -50,10 +50,10 @@ type ToolCallFunc struct {
 }
 
 type chatRequest struct {
-	Model     string          `json:"model"`
-	Messages  []ChatMessage   `json:"messages"`
-	Stream    bool            `json:"stream"`
-	Tools     []ToolDefinition `json:"tools,omitempty"`
+	Model    string           `json:"model"`
+	Messages []ChatMessage    `json:"messages"`
+	Stream   bool             `json:"stream"`
+	Tools    []ToolDefinition `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
@@ -76,10 +76,10 @@ type chatChoice struct {
 }
 
 type streamChunk struct {
-	ID      string            `json:"id"`
-	Object  string            `json:"object"`
-	Created int64             `json:"created"`
-	Model   string            `json:"model"`
+	ID      string              `json:"id"`
+	Object  string              `json:"object"`
+	Created int64               `json:"created"`
+	Model   string              `json:"model"`
 	Choices []streamChunkChoice `json:"choices"`
 }
 
@@ -138,10 +138,10 @@ type StreamEvent struct {
 }
 
 type KiloGatewayClient struct {
-	baseURL    string
-	apiKey     string
+	baseURL      string
+	apiKey       string
 	defaultModel string
-	client     *http.Client
+	client       *http.Client
 }
 
 func NewKiloGatewayClient(baseURL, apiKey, defaultModel string) *KiloGatewayClient {
@@ -207,8 +207,8 @@ func (c *KiloGatewayClient) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 	}
 
 	result := &ChatResponse{
-		ID:    out.ID,
-		Model: out.Model,
+		ID:      out.ID,
+		Model:   out.Model,
 		Message: out.Choices[0].Message,
 	}
 	if out.Usage != nil {
