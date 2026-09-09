@@ -30,6 +30,7 @@ type ToolParamProp struct {
 }
 
 type ToolDefinition struct {
+	Type        string          `json:"type"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  ToolParamSchema `json:"parameters,omitempty"`
@@ -154,7 +155,7 @@ func NewKiloGatewayClient(baseURL, apiKey, defaultModel string) *KiloGatewayClie
 		baseURL = "https://gateway.kilo.ai"
 	}
 	if defaultModel == "" {
-		defaultModel = "claude-sonnet-4-20250514"
+		defaultModel = "kilo-auto/free"
 	}
 	return &KiloGatewayClient{
 		baseURL:      strings.TrimRight(baseURL, "/"),
