@@ -83,180 +83,121 @@ func systemPrompt() string {
 }
 
 func toolDefinitions() []gateway.ToolDefinition {
+	t := func(name, desc string, params gateway.ToolParamSchema) gateway.ToolDefinition {
+		return gateway.ToolDefinition{
+			Type:     "function",
+			Function: gateway.ToolFunction{Name: name, Description: desc, Parameters: params},
+		}
+	}
 	return []gateway.ToolDefinition{
-		{
-			Type:        "function",
-			Name:        "memory_search",
-			Description: "Search entities by query text across observations, names, and relations",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"query": {Type: "string", Description: "Search query"},
-					"limit": {Type: "integer", Description: "Max results (default 20)"},
-				},
-				Required: []string{"query"},
+		t("memory_search", "Search entities by query text across observations, names, and relations", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"query": {Type: "string", Description: "Search query"},
+				"limit": {Type: "integer", Description: "Max results (default 20)"},
 			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_read_graph",
-			Description: "Read the entire knowledge graph for the current project",
-			Parameters: gateway.ToolParamSchema{
-				Type:       "object",
-				Properties: map[string]gateway.ToolParamProp{},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_create_entities",
-			Description: "Create one or more entities with optional observations",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"entities": {
-						Type:        "array",
-						Description: `Array of entities. Each: {"name":"...", "entityType":"...", "observations":[...]}`,
-					},
-				},
-				Required: []string{"entities"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_add_observations",
-			Description: "Add observations to an existing entity",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"entityName":   {Type: "string", Description: "Name of the entity"},
-					"observations": {Type: "array", Description: "Facts to add"},
-					"confidences":  {Type: "array", Description: "Optional confidence 0.0-1.0 per observation"},
-				},
-				Required: []string{"entityName", "observations"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_create_relations",
-			Description: "Create directed relations between entities",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"relations": {
-						Type:        "array",
-						Description: `Array: {"from":"...", "relationType":"DEPLOYS_VIA", "to":"..."}`,
-					},
-				},
-				Required: []string{"relations"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_delete_entities",
-			Description: "Delete entities and all their observations and relations",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"names": {Type: "array", Description: "Entity names to delete"},
-				},
-				Required: []string{"names"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_rename_entity",
-			Description: "Rename an entity and/or change its type",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"oldName":    {Type: "string", Description: "Current entity name"},
-					"newName":    {Type: "string", Description: "New entity name"},
-					"entityType": {Type: "string", Description: "Optional new type: " + entityTypeList()},
-				},
-				Required: []string{"oldName", "newName"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_update_observation",
-			Description: "Update an observation's content by its database ID. Use memory_search first to find the observation ID.",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"id":            {Type: "integer", Description: "Observation database ID"},
-					"content":       {Type: "string", Description: "New content text"},
-					"newConfidence": {Type: "number", Description: "Optional new confidence 0.0-1.0"},
-				},
-				Required: []string{"id", "content"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_delete_observation",
-			Description: "Delete an observation by its database ID. Use memory_search first to find the observation ID.",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"entityName": {Type: "string", Description: "Entity name"},
-					"id":         {Type: "integer", Description: "Observation database ID"},
-				},
-				Required: []string{"entityName", "id"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_delete_relation",
-			Description: "Delete a relation by its database ID or by (from, to, relationType) triple",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"from":         {Type: "string", Description: "Source entity name"},
-					"to":           {Type: "string", Description: "Target entity name"},
-					"relationType": {Type: "string", Description: "Relation type in UPPER_SNAKE_CASE"},
+			Required: []string{"query"},
+		}),
+		t("memory_read_graph", "Read the entire knowledge graph for the current project", gateway.ToolParamSchema{
+			Type:       "object",
+			Properties: map[string]gateway.ToolParamProp{},
+		}),
+		t("memory_create_entities", "Create one or more entities with optional observations", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"entities": {
+					Type:        "array",
+					Description: `Array of entities. Each: {"name":"...", "entityType":"...", "observations":[...]}`,
 				},
 			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_get_history",
-			Description: "Get the change history/audit trail for an entity",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"entityName": {Type: "string", Description: "Entity name"},
-					"limit":      {Type: "integer", Description: "Max entries"},
+			Required: []string{"entities"},
+		}),
+		t("memory_add_observations", "Add observations to an existing entity", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"entityName":   {Type: "string", Description: "Name of the entity"},
+				"observations": {Type: "array", Description: "Facts to add"},
+				"confidences":  {Type: "array", Description: "Optional confidence 0.0-1.0 per observation"},
+			},
+			Required: []string{"entityName", "observations"},
+		}),
+		t("memory_create_relations", "Create directed relations between entities", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"relations": {
+					Type:        "array",
+					Description: `Array: {"from":"...", "relationType":"DEPLOYS_VIA", "to":"..."}`,
 				},
-				Required: []string{"entityName"},
 			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_export",
-			Description: "Export the entire project graph as structured JSON",
-			Parameters: gateway.ToolParamSchema{
-				Type:       "object",
-				Properties: map[string]gateway.ToolParamProp{},
+			Required: []string{"relations"},
+		}),
+		t("memory_delete_entities", "Delete entities and all their observations and relations", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"names": {Type: "array", Description: "Entity names to delete"},
 			},
-		},
-		{
-			Type:        "function",
-			Name:        "memory_import",
-			Description: "Import entities and relations from structured JSON",
-			Parameters: gateway.ToolParamSchema{
-				Type: "object",
-				Properties: map[string]gateway.ToolParamProp{
-					"entities": {
-						Type:        "array",
-						Description: `Array: {"name":"...", "type":"...", "observations":[...]}`,
-					},
-					"relations": {
-						Type:        "array",
-						Description: `Array: {"from":"...", "relationType":"...", "to":"..."}`,
-					},
+			Required: []string{"names"},
+		}),
+		t("memory_rename_entity", "Rename an entity and/or change its type", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"oldName":    {Type: "string", Description: "Current entity name"},
+				"newName":    {Type: "string", Description: "New entity name"},
+				"entityType": {Type: "string", Description: "Optional new type: " + entityTypeList()},
+			},
+			Required: []string{"oldName", "newName"},
+		}),
+		t("memory_update_observation", "Update an observation's content by its database ID. Use memory_search first to find the observation ID.", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"id":            {Type: "integer", Description: "Observation database ID"},
+				"content":       {Type: "string", Description: "New content text"},
+				"newConfidence": {Type: "number", Description: "Optional new confidence 0.0-1.0"},
+			},
+			Required: []string{"id", "content"},
+		}),
+		t("memory_delete_observation", "Delete an observation by its database ID. Use memory_search first to find the observation ID.", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"entityName": {Type: "string", Description: "Entity name"},
+				"id":         {Type: "integer", Description: "Observation database ID"},
+			},
+			Required: []string{"entityName", "id"},
+		}),
+		t("memory_delete_relation", "Delete a relation by its database ID or by (from, to, relationType) triple", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"from":         {Type: "string", Description: "Source entity name"},
+				"to":           {Type: "string", Description: "Target entity name"},
+				"relationType": {Type: "string", Description: "Relation type in UPPER_SNAKE_CASE"},
+			},
+		}),
+		t("memory_get_history", "Get the change history/audit trail for an entity", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"entityName": {Type: "string", Description: "Entity name"},
+				"limit":      {Type: "integer", Description: "Max entries"},
+			},
+			Required: []string{"entityName"},
+		}),
+		t("memory_export", "Export the entire project graph as structured JSON", gateway.ToolParamSchema{
+			Type:       "object",
+			Properties: map[string]gateway.ToolParamProp{},
+		}),
+		t("memory_import", "Import entities and relations from structured JSON", gateway.ToolParamSchema{
+			Type: "object",
+			Properties: map[string]gateway.ToolParamProp{
+				"entities": {
+					Type:        "array",
+					Description: `Array: {"name":"...", "type":"...", "observations":[...]}`,
 				},
-				Required: []string{"entities"},
+				"relations": {
+					Type:        "array",
+					Description: `Array: {"from":"...", "relationType":"...", "to":"..."}`,
+				},
 			},
-		},
+			Required: []string{"entities"},
+		}),
 	}
 }
 

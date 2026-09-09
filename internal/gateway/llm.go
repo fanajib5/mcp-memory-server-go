@@ -30,7 +30,11 @@ type ToolParamProp struct {
 }
 
 type ToolDefinition struct {
-	Type        string          `json:"type"`
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  ToolParamSchema `json:"parameters,omitempty"`
