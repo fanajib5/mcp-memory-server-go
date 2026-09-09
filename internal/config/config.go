@@ -36,7 +36,7 @@ type Config struct {
 
 	KiloGatewayAPIKey  string // KILO_GATEWAY_API_KEY, empty = LLM chat disabled
 	KiloGatewayBaseURL string // KILO_GATEWAY_BASE_URL, default https://gateway.kilo.ai
-	KiloGatewayModel   string // KILO_GATEWAY_DEFAULT_MODEL, default claude-sonnet-4-20250514
+	KiloGatewayModel   string // KILO_GATEWAY_DEFAULT_MODEL, default kilo-auto/free
 }
 
 // Load reads and validates environment variables, applying the fallback chain
@@ -123,7 +123,7 @@ func Load() *Config {
 	}
 	kiloModel := os.Getenv("KILO_GATEWAY_DEFAULT_MODEL")
 	if kiloModel == "" {
-		kiloModel = "claude-sonnet-4-20250514"
+		kiloModel = "kilo-auto/free"
 	}
 	if kiloKey != "" {
 		log.Printf("LLM chat enabled: gateway=%s model=%s", kiloBase, kiloModel)

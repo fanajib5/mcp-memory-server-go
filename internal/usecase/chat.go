@@ -85,6 +85,7 @@ func systemPrompt() string {
 func toolDefinitions() []gateway.ToolDefinition {
 	return []gateway.ToolDefinition{
 		{
+			Type:        "function",
 			Name:        "memory_search",
 			Description: "Search entities by query text across observations, names, and relations",
 			Parameters: gateway.ToolParamSchema{
@@ -97,6 +98,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_read_graph",
 			Description: "Read the entire knowledge graph for the current project",
 			Parameters: gateway.ToolParamSchema{
@@ -105,6 +107,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_create_entities",
 			Description: "Create one or more entities with optional observations",
 			Parameters: gateway.ToolParamSchema{
@@ -119,6 +122,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_add_observations",
 			Description: "Add observations to an existing entity",
 			Parameters: gateway.ToolParamSchema{
@@ -132,6 +136,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_create_relations",
 			Description: "Create directed relations between entities",
 			Parameters: gateway.ToolParamSchema{
@@ -146,6 +151,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_delete_entities",
 			Description: "Delete entities and all their observations and relations",
 			Parameters: gateway.ToolParamSchema{
@@ -157,6 +163,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_rename_entity",
 			Description: "Rename an entity and/or change its type",
 			Parameters: gateway.ToolParamSchema{
@@ -170,6 +177,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_update_observation",
 			Description: "Update an observation's content by its database ID. Use memory_search first to find the observation ID.",
 			Parameters: gateway.ToolParamSchema{
@@ -183,6 +191,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_delete_observation",
 			Description: "Delete an observation by its database ID. Use memory_search first to find the observation ID.",
 			Parameters: gateway.ToolParamSchema{
@@ -195,6 +204,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_delete_relation",
 			Description: "Delete a relation by its database ID or by (from, to, relationType) triple",
 			Parameters: gateway.ToolParamSchema{
@@ -207,6 +217,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_get_history",
 			Description: "Get the change history/audit trail for an entity",
 			Parameters: gateway.ToolParamSchema{
@@ -219,6 +230,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_export",
 			Description: "Export the entire project graph as structured JSON",
 			Parameters: gateway.ToolParamSchema{
@@ -227,6 +239,7 @@ func toolDefinitions() []gateway.ToolDefinition {
 			},
 		},
 		{
+			Type:        "function",
 			Name:        "memory_import",
 			Description: "Import entities and relations from structured JSON",
 			Parameters: gateway.ToolParamSchema{
@@ -583,7 +596,7 @@ func (uc *ChatUseCase) ListModels(ctx context.Context) ([]string, error) {
 	models, err := uc.llm.ListModels(ctx)
 	if err != nil {
 		log.Printf("list models error (non-fatal): %v", err)
-		return []string{"claude-sonnet-4-20250514"}, nil
+		return []string{"kilo-auto/free"}, nil
 	}
 	return models, nil
 }
