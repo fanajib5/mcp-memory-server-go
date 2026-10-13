@@ -185,6 +185,84 @@ func TestHistoryObservationCreatedLogging(t *testing.T) {
 	}
 }
 
+func TestHistoryAttributionPersistence(t *testing.T) {
+	h := newTestHarness(t)
+	defer h.close()
+	ctx := context.Background()
+
+	repo := repository.NewMemoryRepository(h.pool)
+
+	src := "claude-code"
+	sess := "sess-xyz"
+	agent := "Claude Code @ kantor"
+
+	// 1. CreateEntities with attribution
+	_, err := repo.CreateEntities(ctx, "attrproj", []entity.EntityInput{
+		{
+			Name:         "Worker",
+			Type:         "task",
+			Observations: []string{"doing work"},
+			Source:       &src,
+			SessionID:    &sess,
+			AgentLabel:   &agent,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntities with attribution failed: %v", err)
+	}
+
+	hist, err := repo.GetHistory(ctx, "attrproj", "Worker", 10)
+	if err != nil {
+		t.Fatalf("GetHistory failed: %v", err)
+	}
+	if len(hist) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(hist))
+	}
+	if hist[0].Source == nil || *hist[0].Source != src {
+		t.Errorf("expected Source %q, got %+v", src, hist[0].Source)
+	}
+	if hist[0].SessionID == nil || *hist[0].SessionID != sess {
+		t.Errorf("expected SessionID %q, got %+v", sess, hist[0].SessionID)
+	}
+	if hist[0].AgentLabel == nil || *hist[0].AgentLabel != agent {
+		t.Errorf("expected AgentLabel %q, got %+v", agent, hist[0].AgentLabel)
+	}
+
+	// Also verify memory_observations has attribution
+	var obsSrc, obsSess, obsAgent *string
+	err = h.pool.QueryRow(ctx, `SELECT source, session_id, agent_label FROM memory_observations WHERE entity_id = (SELECT id FROM memory_entities WHERE project_id = 'attrproj' AND name = 'Worker')`).Scan(&obsSrc, &obsSess, &obsAgent)
+	if err != nil {
+		t.Fatalf("query observation failed: %v", err)
+	}
+	if obsSrc == nil || *obsSrc != src || obsSess == nil || *obsSess != sess || obsAgent == nil || *obsAgent != agent {
+		t.Errorf("observation attribution mismatch: src=%v, sess=%v, agent=%v", obsSrc, obsSess, obsAgent)
+	}
+
+	// 2. AddObservations with attribution
+	src2 := "antigravity"
+	sess2 := "sess-abc"
+	agent2 := "Antigravity @ rumah"
+	err = repo.AddObservations(ctx, "attrproj", "Worker", []string{"work finished"}, nil, nil, entity.Attribution{
+		Source:     &src2,
+		SessionID:  &sess2,
+		AgentLabel: &agent2,
+	})
+	if err != nil {
+		t.Fatalf("AddObservations with attribution failed: %v", err)
+	}
+
+	hist2, err := repo.GetHistory(ctx, "attrproj", "Worker", 10)
+	if err != nil {
+		t.Fatalf("GetHistory after AddObservations failed: %v", err)
+	}
+	if len(hist2) != 2 {
+		t.Fatalf("expected 2 history entries, got %d", len(hist2))
+	}
+	if hist2[0].Source == nil || *hist2[0].Source != src2 || hist2[0].AgentLabel == nil || *hist2[0].AgentLabel != agent2 {
+		t.Errorf("expected newest entry attribution src2=%q, agent2=%q, got %+v", src2, agent2, hist2[0])
+	}
+}
+
 func TestHistoryProjectIsolation(t *testing.T) {
 	h := newTestHarness(t)
 	defer h.close()
@@ -301,6 +379,46 @@ func TestGetTimeline(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0].EntityName != "EntA" {
 		t.Fatalf("expected 1 entry for EntA, got %d", len(filtered))
+	}
+
+	// Filter by source
+	srcA := "agent-alpha"
+	srcB := "agent-beta"
+	repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 4"}, nil, nil, entity.Attribution{Source: &srcA})
+	repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 5"}, nil, nil, entity.Attribution{Source: &srcB})
+
+	srcFilter := "agent-alpha"
+	bySource, err := repo.GetTimeline(ctx, "timelineproj", time.Time{}, 50, nil, &srcFilter)
+	if err != nil {
+		t.Fatalf("GetTimeline with source filter failed: %v", err)
+	}
+	if len(bySource) != 1 || bySource[0].Source == nil || *bySource[0].Source != srcA {
+		t.Fatalf("expected 1 entry with source %q, got %d entries: %+v", srcA, len(bySource), bySource)
+	}
+
+	// Filter by since
+	cutoff := time.Now().Add(-10 * time.Second)
+	sincePast, err := repo.GetTimeline(ctx, "timelineproj", cutoff, 50, nil, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline with since cutoff in past failed: %v", err)
+	}
+	if len(sincePast) != 4 {
+		t.Fatalf("expected 4 entries since past cutoff, got %d", len(sincePast))
+	}
+
+	sinceFuture, err := repo.GetTimeline(ctx, "timelineproj", time.Now().Add(10*time.Minute), 50, nil, nil)
+	if err != nil {
+		t.Fatalf("GetTimeline with since cutoff in future failed: %v", err)
+	}
+	if len(sinceFuture) != 0 {
+		t.Fatalf("expected 0 entries since future cutoff, got %d", len(sinceFuture))
+	}
+
+	// Verify tie-breaker: order is descending by ID when happened_at is equal
+	for i := 1; i < len(sincePast); i++ {
+		if sincePast[i-1].HappenedAt == sincePast[i].HappenedAt && sincePast[i-1].ID <= sincePast[i].ID {
+			t.Errorf("tie-breaker failed: entry[%d].ID=%d <= entry[%d].ID=%d", i-1, sincePast[i-1].ID, i, sincePast[i].ID)
+		}
 	}
 }
 

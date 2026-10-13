@@ -32,7 +32,7 @@ func vecLiteral(v []float32) string {
 // types/relation types normalized) — domain rules live in the usecase layer.
 type MemoryRepository interface {
 	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput, replaceObs ...bool) ([]string, error)
-	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32) error
+	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32, attr ...entity.Attribution) error
 	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
 	DeleteEntities(ctx context.Context, project string, names []string) error
 	Search(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error)
@@ -101,16 +101,17 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 			}
 			var obsID int
 			if err := tx.QueryRow(ctx,
-				`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector) RETURNING id`,
-				id, obs, conf, emb,
+				`INSERT INTO memory_observations (entity_id, content, confidence, embedding, source, session_id, agent_label)
+				 VALUES ($1, $2, $3, $4::vector, $5, $6, $7) RETURNING id`,
+				id, obs, conf, emb, e.Source, e.SessionID, e.AgentLabel,
 			).Scan(&obsID); err != nil {
 				return nil, fmt.Errorf("add observation to %q: %w", e.Name, err)
 			}
 
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence)
-				 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6)`,
-				project, id, e.Name, obsID, obs, confVal,
+				`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence, source, session_id, agent_label)
+				 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6, $7, $8, $9)`,
+				project, id, e.Name, obsID, obs, confVal, e.Source, e.SessionID, e.AgentLabel,
 			); err != nil {
 				return nil, fmt.Errorf("record observation_created history for %q: %w", e.Name, err)
 			}
@@ -120,7 +121,14 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 	return created, tx.Commit(ctx)
 }
 
-func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32) error {
+func (r *postgresMemory) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32, attr ...entity.Attribution) error {
+	var source, sessionID, agentLabel *string
+	if len(attr) > 0 {
+		source = attr[0].Source
+		sessionID = attr[0].SessionID
+		agentLabel = attr[0].AgentLabel
+	}
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -151,16 +159,17 @@ func (r *postgresMemory) AddObservations(ctx context.Context, project, entityNam
 		}
 		var obsID int
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector) RETURNING id`,
-			id, obs, conf, emb,
+			`INSERT INTO memory_observations (entity_id, content, confidence, embedding, source, session_id, agent_label)
+			 VALUES ($1, $2, $3, $4::vector, $5, $6, $7) RETURNING id`,
+			id, obs, conf, emb, source, sessionID, agentLabel,
 		).Scan(&obsID); err != nil {
 			return err
 		}
 
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence)
-			 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6)`,
-			project, id, entityName, obsID, obs, confVal,
+			`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence, source, session_id, agent_label)
+			 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6, $7, $8, $9)`,
+			project, id, entityName, obsID, obs, confVal, source, sessionID, agentLabel,
 		); err != nil {
 			return fmt.Errorf("record observation_created history for %q: %w", entityName, err)
 		}
@@ -411,7 +420,7 @@ func (r *postgresMemory) GetHistory(ctx context.Context, project, entityName str
 		       to_char(h.happened_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM memory_history h
 		WHERE h.project_id = $1 AND h.entity_name = $2
-		ORDER BY h.happened_at DESC
+		ORDER BY h.happened_at DESC, h.id DESC
 		LIMIT $3`, project, entityName, limit)
 	if err != nil {
 		return nil, err
@@ -429,7 +438,7 @@ func (r *postgresMemory) GetHistory(ctx context.Context, project, entityName str
 	return out, nil
 }
 
-// GetTimeline queries memory_history for a project ordered by happened_at DESC.
+// GetTimeline queries memory_history for a project ordered by happened_at DESC, h.id DESC.
 func (r *postgresMemory) GetTimeline(ctx context.Context, project string, since time.Time, limit int, entityName *string, source *string) ([]entity.HistoryEntry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
@@ -456,7 +465,7 @@ func (r *postgresMemory) GetTimeline(ctx context.Context, project string, since 
 		args = append(args, *source)
 	}
 
-	query += fmt.Sprintf(" ORDER BY h.happened_at DESC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY h.happened_at DESC, h.id DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := r.pool.Query(ctx, query, args...)

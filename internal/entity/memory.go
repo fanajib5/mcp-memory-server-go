@@ -10,7 +10,17 @@ type EntityInput struct {
 	Observations []string    `json:"observations,omitempty" jsonschema:"Facts about this entity"`
 	Confidences  []float64   `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit or empty = neutral."`
 	Tags         []string    `json:"tags,omitempty" jsonschema:"Optional tags for semantic categorisation or filtering"`
+	Source       *string     `json:"source,omitempty" jsonschema:"Optional source identifier (e.g. 'claude-code', 'antigravity')"`
+	SessionID    *string     `json:"session_id,omitempty" jsonschema:"Optional session ID"`
+	AgentLabel   *string     `json:"agent_label,omitempty" jsonschema:"Optional human-readable agent label, e.g. 'Claude Code @ kantor'"`
 	Embeddings   [][]float32 `json:"-"` // internal: populated by usecase embedder, never from MCP input
+}
+
+// Attribution carries metadata about who or what performed a memory operation.
+type Attribution struct {
+	Source     *string `json:"source,omitempty"`
+	SessionID  *string `json:"session_id,omitempty"`
+	AgentLabel *string `json:"agent_label,omitempty"`
 }
 
 // RelationInput is the normalized domain input for creating a directed relation.
