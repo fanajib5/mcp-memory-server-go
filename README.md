@@ -40,16 +40,28 @@ docker-compose.yml -> untuk test lokal (Postgres + server jadi satu)
 
 ## Tools yang di-expose ke agent
 
-Delapan tool, diekspos via MCP Streamable HTTP. Tool create/add/delete/search/read menerima parameter
-opsional `project` (default `"default"`) untuk mengisolasi graph per-project — lihat
-[Project isolation & validasi type](#project-isolation--validasi-type).
+Tools diekspos via MCP Streamable HTTP. Seluruh tool menerima parameter opsional `project` (default `"default"`)
+untuk mengisolasi graph per-project — lihat [Project isolation & validasi type](#project-isolation--validasi-type).
 
-- `memory_create_entities` — bikin entity baru + observasi awal; reuse entity kalau `(project, name)` sudah ada
-- `memory_add_observations` — tambah fakta ke entity; bikin entity-nya kalau belum ada
+### Core Knowledge Graph Tools
+- `memory_create_entities` — bikin entity baru + observasi awal; reuse entity kalau `(project, name)` sudah ada (menerima `tags`, `source`, `agent_label`, `session_id`)
+- `memory_add_observations` — tambah fakta ke entity; bikin entity-nya kalau belum ada (menerima `source`, `agent_label`, `session_id`)
 - `memory_create_relations` — hubungkan entity, format `A --RELATION_TYPE--> B` (active voice, UPPER_SNAKE_CASE)
 - `memory_delete_entities` — hapus entity (cascade ke observasi & relasi)
-- `memory_search` — cari entity berdasarkan nama/isi observasi (pakai ini duluan, bukan read_graph)
+- `memory_search` — cari entity berdasarkan nama/isi observasi. Mendukung filter `entity_types` (array tipe entity) dan `tags_any` (array tag)
 - `memory_read_graph` — dump graph satu project (atau semua project kalau `project` kosong); untuk debugging
+- `memory_rename_entity` — ganti nama dan/atau tipe entity
+- `memory_update_observation` — edit teks observasi berdasarkan pencocokan teks lama
+- `memory_delete_observation` — hapus satu observasi spesifik
+- `memory_delete_relation` — hapus relasi berarah
+- `memory_get_history` — ambil riwayat audit perubahan satu entity dalam project
+
+### Shared Working Brain Tools (Multi-Agent & Continuity)
+- `memory_session_bootstrap` — muat working context di awal sesi: checkpoint aktif terakhir, rekam jejak naratif (`breadcrumb_trail` maks 20 entri terbaru), open tasks, recent decisions, dan top entities. Memberikan peringatan jika `agent_label` belum disetel.
+- `memory_save_checkpoint` — simpan checkpoint pekerjaan aktif (`focus`, `uncommitted`, `blockers`, `next_step`) dan tambahkan ringkasan naratif ke trail saat jeda/selesai sesi.
+- `memory_timeline` — ambil urutan kronologis perubahan dan observasi naratif dalam project (mendukung filter `since`, `limit`, `entity_name`, `source`).
+
+### Backup & Portabilitas
 - `memory_export` — export graph (entities + relations) sebagai JSON terstruktur untuk backup/migrasi
 - `memory_import` — import JSON ke sebuah project; idempoten (skip yang sudah ada)
 
@@ -255,13 +267,28 @@ Response akan menyertakan CORS headers sehingga browser mengizinkan akses terseb
 Server menggunakan mode JSON-only (`JSONResponse: true`). Setiap MCP request/resolve
 langsung melalui JSON, tanpa SSE streaming. Ini cukup untuk kebutuhan tool call dari browser.
 
-## 7. Integrasi dengan instruksi agent
+## 7. Integrasi dengan instruksi agent (Shared Working Brain Protocol)
 
-Nama tool mengikuti konvensi MCP knowledge-graph (`memory_*`), sehingga instruksi memori yang sudah
-ada pada `CLAUDE.md` / `AGENTS.md` umumnya dapat dipakai tanpa perubahan. Server ini fokus pada
-knowledge graph atomik (entity/relation); jika memakai layer memori tambahan berbasis dokumen
-markdown per-project, keduanya bisa berjalan berdampingan — knowledge graph di sini, dokumen lokal
-di sana.
+Server ini mengimplementasikan **Shared Working Brain Protocol** untuk menjamin kontinuitas konteks
+lintas device dan multi-agent (Claude Code, Antigravity, Kilo Code, dll.).
+
+### Multi-Agent Attribution Environment Variables
+Setel di environment sistem atau client runner:
+```bash
+export MCP_AGENT_LABEL="Claude Code @ laptop kantor"
+export MCP_SOURCE="claude-code"
+```
+Jika `MCP_AGENT_LABEL` belum disetel, `memory_session_bootstrap` akan mengembalikan `warning` agar user diingatkan untuk melengkapi identitas mesin/agent.
+
+### Lifecycle Kerja Agent
+1. **Awal Sesi (Bootstrap)**: Selalu panggil `memory_session_bootstrap(project, focus?)` di awal setiap sesi.
+   Tool ini mengembalikan `checkpoint` aktif sesi terakhir (`focus`, `uncommitted`, `blockers`, `next_step`),
+   `breadcrumb_trail` (maks 20 narasi jejak progres terbaru), `open_tasks`, `recent_decisions`, dan `top_entities`.
+2. **Saat Menemukan Warning**: Jika bootstrap mengembalikan `warning`, berikan reminder ke user untuk menambahkan `MCP_AGENT_LABEL` dan `MCP_SOURCE` ke environment.
+3. **Pencarian & Penulisan**: Gunakan `memory_search` dengan filter `entity_types` atau `tags_any` untuk penemuan konteks yang presisi. Gunakan `memory_timeline` untuk meninjau perubahan naratif baru-baru ini.
+4. **Akhir Sesi / Task Wrap-up**: Selalu panggil `memory_save_checkpoint` saat berganti topik, rehat, atau sebelum menutup sesi agar agent di sesi atau device berikutnya dapat langsung melanjutkan tanpa blind spot.
+
+Lihat panduan lengkap di [`AGENTS.md`](./AGENTS.md).
 
 ## Catatan pengembangan lanjutan
 
