@@ -49,6 +49,9 @@ type MemoryRepository interface {
 	TouchAccessed(ctx context.Context, entityIDs []int) error
 	GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error)
 	GetTimeline(ctx context.Context, project string, since time.Time, limit int, entityName *string, source *string) ([]entity.HistoryEntry, error)
+	LogHistory(ctx context.Context, project, entityName, action string, attr entity.Attribution) error
+	GetTopEntities(ctx context.Context, project string, limit int) ([]entity.SearchResult, error)
+	GetRecentEntitiesByType(ctx context.Context, project, entityType string, since time.Time) ([]entity.Entity, error)
 }
 
 // postgresMemory is the pgx-backed MemoryRepository.
@@ -486,6 +489,113 @@ func (r *postgresMemory) GetTimeline(ctx context.Context, project string, since 
 	return out, nil
 }
 
+// LogHistory writes an explicit history event (such as checkpoint_saved or session_start).
+func (r *postgresMemory) LogHistory(ctx context.Context, project, entityName, action string, attr entity.Attribution) error {
+	var entityID *int
+	if entityName != "" {
+		var id int
+		err := r.pool.QueryRow(ctx, `SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, entityName).Scan(&id)
+		if err == nil {
+			entityID = &id
+		}
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO memory_history (project_id, entity_id, entity_name, action, source, session_id, agent_label)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		project, entityID, entityName, action, attr.Source, attr.SessionID, attr.AgentLabel,
+	)
+	return err
+}
+
+// GetTopEntities returns top entities in the project ordered by recency and confidence.
+func (r *postgresMemory) GetTopEntities(ctx context.Context, project string, limit int) ([]entity.SearchResult, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, name, entity_type, avg_conf, (avg_conf * recency_factor) AS final_score
+		FROM (
+		  SELECT e.id, e.name, e.entity_type,
+		         COALESCE(avg(COALESCE(o.confidence, 1.0)), 1.0) AS avg_conf,
+		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
+		  FROM memory_entities e
+		  LEFT JOIN memory_observations o ON o.entity_id = e.id
+		  WHERE e.project_id = $1
+		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
+		) agg
+		ORDER BY (avg_conf * recency_factor) DESC, id DESC
+		LIMIT $2`, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var found []searchRow
+	for rows.Next() {
+		var rr searchRow
+		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.avgConf, &rr.score); err != nil {
+			return nil, err
+		}
+		found = append(found, rr)
+	}
+
+	results, _, err := r.fetchResults(ctx, found)
+	return results, err
+}
+
+// GetRecentEntitiesByType returns entities of a given entity_type updated since a cutoff time.
+func (r *postgresMemory) GetRecentEntitiesByType(ctx context.Context, project, entityType string, since time.Time) ([]entity.Entity, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.id, e.name, e.entity_type
+		FROM memory_entities e
+		WHERE e.project_id = $1 AND e.entity_type = $2 AND e.updated_at >= $3
+		ORDER BY e.updated_at DESC, e.id DESC`, project, entityType, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type entRow struct {
+		id   int
+		name string
+		typ  string
+	}
+	var entities []entRow
+	for rows.Next() {
+		var er entRow
+		if err := rows.Scan(&er.id, &er.name, &er.typ); err != nil {
+			return nil, err
+		}
+		entities = append(entities, er)
+	}
+
+	var out []entity.Entity
+	for _, e := range entities {
+		obsRows, err := r.pool.Query(ctx,
+			`SELECT content FROM memory_observations WHERE entity_id = $1 ORDER BY created_at`, e.id)
+		if err != nil {
+			return nil, err
+		}
+		var observations []string
+		for obsRows.Next() {
+			var c string
+			if err := obsRows.Scan(&c); err != nil {
+				obsRows.Close()
+				return nil, err
+			}
+			observations = append(observations, c)
+		}
+		obsRows.Close()
+
+		out = append(out, entity.Entity{
+			Name:         e.name,
+			EntityType:   e.typ,
+			Observations: observations,
+		})
+	}
+
+	return out, nil
+}
 
 // ReadGraph returns the graph for one project, or all projects when project == "".
 func (r *postgresMemory) ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error) {
