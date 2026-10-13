@@ -25,17 +25,26 @@ go build ./...   # verifikasi kode compile
 > Catatan: project ini memakai `github.com/modelcontextprotocol/go-sdk` v1.0.0 (build terverifikasi
 > bersih dengan `go build ./...` + `go vet`). SDK tersebut masih aktif berkembang; jika di masa depan
 > terdapat perubahan nama field antar minor versi, biasanya hanya butuh penyesuaian kecil di
-> `main.go` / `db.go`.
+> `cmd/server/main.go` dan `internal/delivery/mcp/`.
 
 ## Isi project
 
 ```
-main.go            -> server setup, tool registration, HTTP + auth
-db.go              -> query layer ke PostgreSQL (pgx)
-schema.sql         -> skema entities / observations / relations + lookup type, di-embed ke binary (go:embed), auto-migrasi saat start
-Dockerfile         -> multi-stage build -> distroless static image
-docker-compose.yml -> untuk test lokal (Postgres + server jadi satu)
-.env.example       -> template environment variables
+cmd/server/main.go               -> entry point: wire dependencies, start HTTP server
+internal/entity/                 -> domain types (Entity, Relation, Observation, Checkpoint, dll.)
+internal/repository/             -> data access layer ke PostgreSQL (pgx) + schema.sql (go:embed, auto-migrasi)
+internal/usecase/                -> business logic (CRUD, search, checkpoint, bootstrap, timeline)
+internal/gateway/                -> integrasi LLM gateway (chat, stream, models, embedding)
+internal/delivery/http/          -> REST/HTTP handlers, OAuth 2.0, web UI, middleware
+internal/delivery/mcp/           -> MCP tool registration & handlers (Streamable HTTP)
+internal/backup/                 -> scheduled auto-backup ke Docker volume
+internal/config/                 -> configuration loader
+internal/event/                  -> internal event bus
+Dockerfile                       -> multi-stage build -> distroless static image
+docker-compose.yml               -> untuk test lokal (Postgres + server jadi satu)
+.env.example                     -> template environment variables
+docs/                            -> design specs & implementation plans
+AGENTS.md                        -> protokol kerja agent (Shared Working Brain)
 ```
 
 ## Tools yang di-expose ke agent
@@ -76,8 +85,8 @@ tetap backward-compatible.
 
 **Validasi type.** Menjaga graph rapi supaya bisa diandalkan untuk query terstruktur:
 - `entity_type` harus merupakan type terdaftar di tabel lookup `memory_entity_types` (di-seed:
-  `project`, `person`, `decision`, `tool`, `concept`, `place`). Nilai tak terdaftar ditolak oleh
-  foreign key di Postgres. Menambah type baru = `INSERT` satu baris ke tabel lookup.
+  `project`, `person`, `decision`, `tool`, `concept`, `place`, `task`, `checkpoint`, `checkpoint_trail`).
+  Nilai tak terdaftar ditolak oleh foreign key di Postgres. Menambah type baru = `INSERT` satu baris ke tabel lookup.
 - `relation_type` dinormalisasi otomatis ke `UPPER_SNAKE_CASE` (`"deployed via"` → `DEPLOYED_VIA`),
   jadi variasi penulisan tidak menumpuk jadi type berbeda.
 
@@ -297,8 +306,6 @@ Lihat panduan lengkap di [`AGENTS.md`](./AGENTS.md).
   observasi yang menyebut "predis"). Butuh generate embedding tiap observasi baru.
 - Graph traversal multi-hop: tool `memory_find_path(from, to)` untuk menjelajah hubungan tidak
   langsung begitu graph membesar.
-- Audit trail: kolom `source` / `session_id` di `memory_observations` untuk melacak agent atau sesi
-  mana yang menulis suatu fakta.
 - Transport saat ini `Stateless: true` per-request — cocok untuk beban ringan-menengah. Untuk trafik
   tinggi, dapat dioptimasi ke session-based transport dengan connection pooling yang lebih agresif.
 
