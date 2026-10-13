@@ -73,5 +73,20 @@ func BuildServer(h *Handlers) *mcpgo.Server {
 		Description: "Retrieve the change history (audit trail) for one entity — observation edits, deletes, and entity renames/type changes.",
 	}, h.handleGetHistory)
 
+	mcpgo.AddTool(server, &mcpgo.Tool{
+		Name:        "memory_save_checkpoint",
+		Description: "Save an active checkpoint of work-in-progress for a project and append a narrative breadcrumb to the session trail. Use when wrapping up work, switching devices, or before ending a task.",
+	}, h.handleSaveCheckpoint)
+
+	mcpgo.AddTool(server, &mcpgo.Tool{
+		Name:        "memory_session_bootstrap",
+		Description: "Bootstrap a new session with working context: active checkpoint, recent breadcrumb trail, open tasks, recent decisions, and top entities. Warns if MCP_AGENT_LABEL is not configured.",
+	}, h.handleSessionBootstrap)
+
+	mcpgo.AddTool(server, &mcpgo.Tool{
+		Name:        "memory_timeline",
+		Description: "Get a chronological timeline of events and observations in a project. Useful for understanding what changed recently across sessions and devices.",
+	}, h.handleTimeline)
+
 	return server
 }

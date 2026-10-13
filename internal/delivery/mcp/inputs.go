@@ -6,8 +6,11 @@ import "mcp-memory-server/internal/entity"
 // reflects these (including nested entity types) to build each tool's schema.
 
 type CreateEntitiesInput struct {
-	Project  string               `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
-	Entities []entity.EntityInput `json:"entities" jsonschema:"Entities to create or update"`
+	Project    string               `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Entities   []entity.EntityInput `json:"entities" jsonschema:"Entities to create or update"`
+	Source     *string              `json:"source,omitempty" jsonschema:"Optional source identifier (e.g. 'claude-code', 'antigravity')"`
+	SessionID  *string              `json:"session_id,omitempty" jsonschema:"Optional session ID"`
+	AgentLabel *string              `json:"agent_label,omitempty" jsonschema:"Optional human-readable agent label, e.g. 'Claude Code @ kantor'"`
 }
 
 type AddObservationsInput struct {
@@ -15,6 +18,9 @@ type AddObservationsInput struct {
 	EntityName   string    `json:"entityName"`
 	Observations []string  `json:"observations" jsonschema:"New facts to attach to this entity"`
 	Confidences  []float64 `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit/empty = neutral (treated as 1.0)."`
+	Source       *string   `json:"source,omitempty" jsonschema:"Optional source identifier (e.g. 'claude-code', 'antigravity')"`
+	SessionID    *string   `json:"session_id,omitempty" jsonschema:"Optional session ID"`
+	AgentLabel   *string   `json:"agent_label,omitempty" jsonschema:"Optional human-readable agent label, e.g. 'Claude Code @ kantor'"`
 }
 
 type CreateRelationsInput struct {
@@ -28,9 +34,11 @@ type DeleteEntitiesInput struct {
 }
 
 type SearchInput struct {
-	Project string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
-	Query   string `json:"query"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"Max results, default 20, max 100"`
+	Project     string   `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Query       string   `json:"query"`
+	Limit       int      `json:"limit,omitempty" jsonschema:"Max results, default 20, max 100"`
+	EntityTypes []string `json:"entity_types,omitempty" jsonschema:"Optional list of entity types to filter by (e.g. ['decision', 'task'])"`
+	TagsAny     []string `json:"tags_any,omitempty" jsonschema:"Optional list of tags; entity matches if it has ANY of these tags"`
 }
 
 type ReadGraphInput struct {
@@ -79,4 +87,32 @@ type GetHistoryInput struct {
 	Project    string `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
 	EntityName string `json:"entityName" jsonschema:"Entity to retrieve the change history for"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Max entries, default 50"`
+}
+
+type SaveCheckpointInput struct {
+	Project     string  `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Focus       string  `json:"focus" jsonschema:"Current focus/active task being worked on"`
+	Uncommitted string  `json:"uncommitted,omitempty" jsonschema:"Optional summary of uncommitted changes or files modified"`
+	Blockers    string  `json:"blockers,omitempty" jsonschema:"Optional blockers or obstacles encountered"`
+	NextStep    string  `json:"next_step,omitempty" jsonschema:"Optional immediate next step for the next session"`
+	Breadcrumb  string  `json:"breadcrumb,omitempty" jsonschema:"Optional narrative summary for the trail (defaults to first 80 chars of focus)"`
+	Source      *string `json:"source,omitempty" jsonschema:"Optional source identifier (e.g. 'claude-code', 'antigravity')"`
+	SessionID   *string `json:"session_id,omitempty" jsonschema:"Optional session ID"`
+	AgentLabel  *string `json:"agent_label,omitempty" jsonschema:"Optional human-readable agent label, e.g. 'Claude Code @ kantor'"`
+}
+
+type SessionBootstrapInput struct {
+	Project    string  `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Focus      *string `json:"focus,omitempty" jsonschema:"Optional focus topic to bias top entities search toward"`
+	Source     *string `json:"source,omitempty" jsonschema:"Optional source identifier (e.g. 'claude-code', 'antigravity')"`
+	SessionID  *string `json:"session_id,omitempty" jsonschema:"Optional session ID"`
+	AgentLabel *string `json:"agent_label,omitempty" jsonschema:"Optional human-readable agent label, e.g. 'Claude Code @ kantor'"`
+}
+
+type TimelineInput struct {
+	Project    string  `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Since      string  `json:"since,omitempty" jsonschema:"Optional ISO 8601 / RFC 3339 timestamp cutoff (e.g. '2026-10-13T00:00:00Z')"`
+	Limit      int     `json:"limit,omitempty" jsonschema:"Max entries, default 50, max 500"`
+	EntityName *string `json:"entity_name,omitempty" jsonschema:"Optional entity name to filter timeline events"`
+	Source     *string `json:"source,omitempty" jsonschema:"Optional source identifier to filter timeline events"`
 }

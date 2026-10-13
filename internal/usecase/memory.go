@@ -99,10 +99,10 @@ func (u *MemoryUseCase) CreateEntities(ctx context.Context, project string, enti
 	return created, nil
 }
 
-func (u *MemoryUseCase) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64) error {
+func (u *MemoryUseCase) AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, attr ...entity.Attribution) error {
 	project = defaultProject(project)
 	embeddings := u.embedTexts(ctx, observations)
-	if err := u.repo.AddObservations(ctx, project, entityName, observations, clampConfidences(confidences), embeddings); err != nil {
+	if err := u.repo.AddObservations(ctx, project, entityName, observations, clampConfidences(confidences), embeddings, attr...); err != nil {
 		return err
 	}
 	u.publish(project, entityName, "observation_added")
@@ -301,6 +301,11 @@ func (u *MemoryUseCase) DeleteRelationByTriple(ctx context.Context, project, fro
 // GetHistory returns the audit trail for one entity within a project.
 func (u *MemoryUseCase) GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error) {
 	return u.repo.GetHistory(ctx, defaultProject(project), entityName, limit)
+}
+
+// GetTimeline returns chronological audit trail events across entities in a project.
+func (u *MemoryUseCase) GetTimeline(ctx context.Context, project string, since time.Time, limit int, entityName *string, source *string) ([]entity.HistoryEntry, error) {
+	return u.repo.GetTimeline(ctx, defaultProject(project), since, limit, entityName, source)
 }
 
 // SaveCheckpoint saves the current progress into <project>:checkpoint:active and appends to <project>:checkpoint:trail.
