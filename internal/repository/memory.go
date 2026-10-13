@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -30,7 +31,7 @@ func vecLiteral(v []float32) string {
 // Implementations receive already-normalized values (project non-empty, entity
 // types/relation types normalized) — domain rules live in the usecase layer.
 type MemoryRepository interface {
-	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error)
+	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput, replaceObs ...bool) ([]string, error)
 	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32) error
 	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
 	DeleteEntities(ctx context.Context, project string, names []string) error
@@ -47,6 +48,7 @@ type MemoryRepository interface {
 	DeleteRelationByTriple(ctx context.Context, project, from, to, relationType string) error
 	TouchAccessed(ctx context.Context, entityIDs []int) error
 	GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error)
+	GetTimeline(ctx context.Context, project string, since time.Time, limit int, entityName *string, source *string) ([]entity.HistoryEntry, error)
 }
 
 // postgresMemory is the pgx-backed MemoryRepository.
@@ -59,7 +61,9 @@ func NewMemoryRepository(pool *pgxpool.Pool) MemoryRepository {
 	return &postgresMemory{pool: pool}
 }
 
-func (r *postgresMemory) CreateEntities(ctx context.Context, project string, entities []entity.EntityInput) ([]string, error) {
+func (r *postgresMemory) CreateEntities(ctx context.Context, project string, entities []entity.EntityInput, replaceObs ...bool) ([]string, error) {
+	shouldReplace := len(replaceObs) > 0 && replaceObs[0]
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -77,21 +81,38 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 			).Scan(&id); err != nil {
 				return nil, fmt.Errorf("create entity %q: %w", e.Name, err)
 			}
+		} else if shouldReplace {
+			if _, err := tx.Exec(ctx, `DELETE FROM memory_observations WHERE entity_id = $1`, id); err != nil {
+				return nil, fmt.Errorf("delete existing observations for %q: %w", e.Name, err)
+			}
 		}
+
 		for i, obs := range e.Observations {
 			var conf any
+			var confVal *float64
 			if i < len(e.Confidences) {
 				conf = e.Confidences[i]
+				c := e.Confidences[i]
+				confVal = &c
 			}
 			var emb any
 			if i < len(e.Embeddings) {
 				emb = vecLiteral(e.Embeddings[i])
 			}
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector)`,
+			var obsID int
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector) RETURNING id`,
 				id, obs, conf, emb,
-			); err != nil {
+			).Scan(&obsID); err != nil {
 				return nil, fmt.Errorf("add observation to %q: %w", e.Name, err)
+			}
+
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence)
+				 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6)`,
+				project, id, e.Name, obsID, obs, confVal,
+			); err != nil {
+				return nil, fmt.Errorf("record observation_created history for %q: %w", e.Name, err)
 			}
 		}
 		created = append(created, e.Name)
@@ -118,18 +139,30 @@ func (r *postgresMemory) AddObservations(ctx context.Context, project, entityNam
 	}
 	for i, obs := range observations {
 		var conf any
+		var confVal *float64
 		if i < len(confidences) {
 			conf = confidences[i]
+			c := confidences[i]
+			confVal = &c
 		}
 		var emb any
 		if i < len(embeddings) {
 			emb = vecLiteral(embeddings[i])
 		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector)`,
+		var obsID int
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO memory_observations (entity_id, content, confidence, embedding) VALUES ($1, $2, $3, $4::vector) RETURNING id`,
 			id, obs, conf, emb,
-		); err != nil {
+		).Scan(&obsID); err != nil {
 			return err
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, new_value, confidence)
+			 VALUES ($1, $2, $3, $4, 'observation_created', $5, $6)`,
+			project, id, entityName, obsID, obs, confVal,
+		); err != nil {
+			return fmt.Errorf("record observation_created history for %q: %w", entityName, err)
 		}
 	}
 	return tx.Commit(ctx)
@@ -367,19 +400,19 @@ func (r *postgresMemory) TouchAccessed(ctx context.Context, entityIDs []int) err
 	return err
 }
 
-// GetHistory returns audit-trail entries for one entity (scoping by project via
-// the entity_name which is unique per project).
+// GetHistory returns audit-trail entries for one entity, strictly scoped by project_id and entity_name.
 func (r *postgresMemory) GetHistory(ctx context.Context, project, entityName string, limit int) ([]entity.HistoryEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT h.id, h.entity_name, h.action, h.old_value, h.new_value, h.confidence,
+		SELECT h.id, h.project_id, h.entity_name, h.action, h.old_value, h.new_value, h.confidence,
+		       h.source, h.session_id, h.agent_label,
 		       to_char(h.happened_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM memory_history h
-		WHERE h.entity_name = $1
+		WHERE h.project_id = $1 AND h.entity_name = $2
 		ORDER BY h.happened_at DESC
-		LIMIT $2`, entityName, limit)
+		LIMIT $3`, project, entityName, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -387,13 +420,63 @@ func (r *postgresMemory) GetHistory(ctx context.Context, project, entityName str
 	var out []entity.HistoryEntry
 	for rows.Next() {
 		var h entity.HistoryEntry
-		if err := rows.Scan(&h.ID, &h.EntityName, &h.Action, &h.OldValue, &h.NewValue, &h.Confidence, &h.HappenedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.ProjectID, &h.EntityName, &h.Action, &h.OldValue, &h.NewValue, &h.Confidence,
+			&h.Source, &h.SessionID, &h.AgentLabel, &h.HappenedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
 	}
 	return out, nil
 }
+
+// GetTimeline queries memory_history for a project ordered by happened_at DESC.
+func (r *postgresMemory) GetTimeline(ctx context.Context, project string, since time.Time, limit int, entityName *string, source *string) ([]entity.HistoryEntry, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+
+	query := `
+		SELECT h.id, h.project_id, h.entity_name, h.action, h.old_value, h.new_value, h.confidence,
+		       h.source, h.session_id, h.agent_label,
+		       to_char(h.happened_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM memory_history h
+		WHERE h.project_id = $1`
+	args := []any{project}
+
+	if !since.IsZero() {
+		query += fmt.Sprintf(" AND h.happened_at >= $%d", len(args)+1)
+		args = append(args, since)
+	}
+	if entityName != nil && *entityName != "" {
+		query += fmt.Sprintf(" AND h.entity_name = $%d", len(args)+1)
+		args = append(args, *entityName)
+	}
+	if source != nil && *source != "" {
+		query += fmt.Sprintf(" AND h.source = $%d", len(args)+1)
+		args = append(args, *source)
+	}
+
+	query += fmt.Sprintf(" ORDER BY h.happened_at DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []entity.HistoryEntry
+	for rows.Next() {
+		var h entity.HistoryEntry
+		if err := rows.Scan(&h.ID, &h.ProjectID, &h.EntityName, &h.Action, &h.OldValue, &h.NewValue, &h.Confidence,
+			&h.Source, &h.SessionID, &h.AgentLabel, &h.HappenedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
 
 // ReadGraph returns the graph for one project, or all projects when project == "".
 func (r *postgresMemory) ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error) {
@@ -670,12 +753,12 @@ func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, new
 	// History: capture rename and/or type change. entity_name = current (post-mutation) name
 	// so GetHistory (queried by current name) finds both events.
 	if newName != oldName {
-		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, 'entity_renamed', $3, $4)`,
-			id, newName, oldName, newName)
+		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_renamed', $4, $5)`,
+			project, id, newName, oldName, newName)
 	}
 	if entityType != oldType {
-		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, 'entity_type_changed', $3, $4)`,
-			id, newName, oldType, entityType)
+		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_type_changed', $4, $5)`,
+			project, id, newName, oldType, entityType)
 	}
 
 	return tx.Commit(ctx)
@@ -704,8 +787,8 @@ func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, 
 		return err
 	}
 
-	tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, 'observation_deleted', $4)`,
-		entityID, entityName, id, oldContent)
+	tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
+		project, entityID, entityName, id, oldContent)
 
 	return tx.Commit(ctx)
 }
@@ -758,8 +841,8 @@ func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, 
 
 	// History: capture content change.
 	if oldContent != content {
-		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, 'observation_updated', $4, $5)`,
-			entityID, entityName, id, oldContent, content)
+		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
+			project, entityID, entityName, id, oldContent, content)
 	}
 
 	return tx.Commit(ctx)
@@ -800,8 +883,8 @@ func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project
 		return err
 	}
 
-	tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, 'observation_deleted', $4)`,
-		entityID, entityName, obsID, content)
+	tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
+		project, entityID, entityName, obsID, content)
 
 	return tx.Commit(ctx)
 }
@@ -847,8 +930,8 @@ func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project
 	}
 
 	if oldContent != newContent {
-		tx.Exec(ctx, `INSERT INTO memory_history (entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, 'observation_updated', $4, $5)`,
-			entityID, entityName, obsID, oldContent, newContent)
+		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
+			project, entityID, entityName, obsID, oldContent, newContent)
 	}
 
 	return tx.Commit(ctx)
