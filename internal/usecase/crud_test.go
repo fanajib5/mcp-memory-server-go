@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"mcp-memory-server/internal/entity"
+	"mcp-memory-server/internal/repository"
 )
 
 func TestCRUDOperations(t *testing.T) {
@@ -135,5 +136,47 @@ func TestEditByContentAndTriple(t *testing.T) {
 
 	if err := h.mem.DeleteRelationByTriple(ctx, "editproj", "DeltaRenamed", "Echo", "uses"); err == nil {
 		t.Fatal("expected error deleting absent relation")
+	}
+}
+
+func TestCreateEntitiesReplaceObs(t *testing.T) {
+	h := newTestHarness(t)
+	defer h.close()
+	ctx := context.Background()
+
+	// Create entity initial observations
+	repo := repository.NewMemoryRepository(h.pool)
+	_, err := repo.CreateEntities(ctx, "replproj", []entity.EntityInput{
+		{Name: "Target", Type: "checkpoint", Observations: []string{"old obs 1", "old obs 2"}},
+	})
+	if err != nil {
+		t.Fatalf("create initial: %v", err)
+	}
+
+	detail, err := h.stats.GetEntityDetail(ctx, "replproj", "Target")
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Observations) != 2 {
+		t.Fatalf("expected 2 observations initially, got %d", len(detail.Observations))
+	}
+
+	// Re-create with replaceObs = true
+	_, err = repo.CreateEntities(ctx, "replproj", []entity.EntityInput{
+		{Name: "Target", Type: "checkpoint", Observations: []string{"fresh obs"}},
+	}, true)
+	if err != nil {
+		t.Fatalf("replace create: %v", err)
+	}
+
+	detailAfter, err := h.stats.GetEntityDetail(ctx, "replproj", "Target")
+	if err != nil {
+		t.Fatalf("get detail after: %v", err)
+	}
+	if len(detailAfter.Observations) != 1 {
+		t.Fatalf("expected 1 observation after replace, got %d", len(detailAfter.Observations))
+	}
+	if detailAfter.Observations[0].Content != "fresh obs" {
+		t.Errorf("expected 'fresh obs', got %q", detailAfter.Observations[0].Content)
 	}
 }

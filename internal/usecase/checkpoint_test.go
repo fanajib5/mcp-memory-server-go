@@ -105,12 +105,12 @@ func TestSaveCheckpointOverwritesActiveAndAppendsTrail(t *testing.T) {
 	// 2. Save second checkpoint - should overwrite active observations and append to trail
 	time.Sleep(10 * time.Millisecond)
 	res2, err := h.mem.SaveCheckpoint(ctx, entity.SaveCheckpointInput{
-		Project:     project,
-		Focus:       "Second focus update with long focus that needs default breadcrumb truncation because breadcrumb is omitted",
-		NextStep:    "verify build",
-		Source:      &source,
-		SessionID:   &sessionID,
-		AgentLabel:  &agentLabel,
+		Project:    project,
+		Focus:      "Second focus update with long focus that needs default breadcrumb truncation because breadcrumb is omitted",
+		NextStep:   "verify build",
+		Source:     &source,
+		SessionID:  &sessionID,
+		AgentLabel: &agentLabel,
 	})
 	if err != nil {
 		t.Fatalf("SaveCheckpoint 2 failed: %v", err)
