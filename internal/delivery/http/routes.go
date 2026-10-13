@@ -1,3 +1,8 @@
+// mcp-memory-server-go - Personal Knowledge Graph MCP Server
+// Copyright (C) 2026  Faiq Najib
+//
+// SPDX-License-Identifier: GPL-2.0-only
+
 package http
 
 import (
@@ -54,6 +59,10 @@ func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService,
 		mux.Handle("POST /ui/relation", ui.Session.CSRFAuth(ui.HandleRelationCreate))
 		mux.Handle("POST /ui/relation/delete", ui.Session.CSRFAuth(ui.HandleRelationDelete))
 		mux.Handle("GET /ui/history", ui.Session.Auth(ui.HandleHistory))
+		mux.Handle("GET /ui/chat", ui.Session.Auth(ui.Chat.HandlePage(ui)))
+		mux.Handle("POST /ui/chat/send", ui.Session.CSRFAuth(ui.Chat.HandleSend(ui)))
+		mux.Handle("POST /ui/chat/clear", ui.Session.CSRFAuth(ui.Chat.HandleClear(ui)))
+		mux.Handle("GET /ui/chat/models", ui.Session.Auth(ui.Chat.HandleModels(ui)))
 	}
 
 	return corsMiddleware(cfg.CORSAllowedOrigins, mux)

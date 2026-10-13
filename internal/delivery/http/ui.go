@@ -1,3 +1,8 @@
+// mcp-memory-server-go - Personal Knowledge Graph MCP Server
+// Copyright (C) 2026  Faiq Najib
+//
+// SPDX-License-Identifier: GPL-2.0-only
+
 package http
 
 import (
@@ -17,6 +22,7 @@ type UI struct {
 	SU      *usecase.StatsUseCase
 	Tmpl    *template.Template
 	Session *Session
+	Chat    *ChatHandler
 }
 
 func (u *UI) renderUI(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {

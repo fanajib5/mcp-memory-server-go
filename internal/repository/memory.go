@@ -1,3 +1,8 @@
+// mcp-memory-server-go - Personal Knowledge Graph MCP Server
+// Copyright (C) 2026  Faiq Najib
+//
+// SPDX-License-Identifier: GPL-2.0-only
+
 package repository
 
 import (
@@ -285,7 +290,7 @@ func (r *postgresMemory) searchLexical(ctx context.Context, project, query strin
 	sqlStr += fmt.Sprintf(`
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
-		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		CROSS JOIN plainto_tsquery('simple', regexp_replace($2, '\\W+', ' ', 'g')) AS q
 		WHERE agg.vec @@ q
 		ORDER BY (ts_rank(agg.vec, q) * agg.avg_conf * agg.recency_factor) DESC
 		LIMIT $%d`, argIdx)
@@ -343,7 +348,7 @@ func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string
 	sqlStr += fmt.Sprintf(`
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
-		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
+		CROSS JOIN plainto_tsquery('simple', regexp_replace($2, '\\W+', ' ', 'g')) AS q
 		LEFT JOIN LATERAL (
 		  SELECT max(1 - (o2.embedding <=> $3::vector)) AS sem_score
 		  FROM memory_observations o2
