@@ -141,18 +141,27 @@ func (u *MemoryUseCase) DeleteEntities(ctx context.Context, project string, name
 // Search runs the query, then best-effort bumps last_accessed_at for every
 // matched entity (retrieval = access). A touch failure is logged, not fatal,
 // so a search never fails due to access-tracking.
-func (u *MemoryUseCase) Search(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, error) {
+// Optional filters: filterParams[0] = entityTypes []string, filterParams[1] = tagsAny []string.
+func (u *MemoryUseCase) Search(ctx context.Context, project, query string, limit int, filterParams ...[]string) ([]entity.SearchResult, error) {
 	project = defaultProject(project)
 	if limit <= 0 {
 		limit = 20
 	}
+	var entityTypes, tagsAny []string
+	if len(filterParams) > 0 {
+		entityTypes = filterParams[0]
+	}
+	if len(filterParams) > 1 {
+		tagsAny = filterParams[1]
+	}
+
 	// Best-effort query embedding for semantic fusion (nil = lexical-only).
 	queryVec := u.embedTexts(ctx, []string{query})
 	var vec []float32
 	if len(queryVec) > 0 {
 		vec = queryVec[0]
 	}
-	results, ids, err := u.repo.Search(ctx, project, query, limit, vec)
+	results, ids, err := u.repo.Search(ctx, project, query, limit, vec, entityTypes, tagsAny)
 	if err != nil {
 		return nil, err
 	}

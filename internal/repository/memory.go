@@ -35,7 +35,7 @@ type MemoryRepository interface {
 	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32, attr ...entity.Attribution) error
 	CreateRelations(ctx context.Context, project string, relations []entity.RelationInput) ([]string, error)
 	DeleteEntities(ctx context.Context, project string, names []string) error
-	Search(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error)
+	Search(ctx context.Context, project, query string, limit int, queryVec []float32, entityTypes []string, tagsAny []string) ([]entity.SearchResult, []int, error)
 	ReadGraph(ctx context.Context, project string) (*entity.FullGraph, error)
 	Export(ctx context.Context, project string) (*entity.ExportPayload, error)
 	Import(ctx context.Context, project string, g *entity.ExportPayload) (*entity.ImportResult, error)
@@ -78,15 +78,26 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 		var id int
 		err := tx.QueryRow(ctx, `SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, e.Name).Scan(&id)
 		if err != nil {
+			tags := e.Tags
+			if tags == nil {
+				tags = []string{}
+			}
 			if err := tx.QueryRow(ctx,
-				`INSERT INTO memory_entities (project_id, name, entity_type) VALUES ($1, $2, $3) RETURNING id`,
-				project, e.Name, e.Type,
+				`INSERT INTO memory_entities (project_id, name, entity_type, tags) VALUES ($1, $2, $3, $4) RETURNING id`,
+				project, e.Name, e.Type, tags,
 			).Scan(&id); err != nil {
 				return nil, fmt.Errorf("create entity %q: %w", e.Name, err)
 			}
-		} else if shouldReplace {
-			if _, err := tx.Exec(ctx, `DELETE FROM memory_observations WHERE entity_id = $1`, id); err != nil {
-				return nil, fmt.Errorf("delete existing observations for %q: %w", e.Name, err)
+		} else {
+			if len(e.Tags) > 0 {
+				if _, err := tx.Exec(ctx, `UPDATE memory_entities SET tags = $1 WHERE id = $2`, e.Tags, id); err != nil {
+					return nil, fmt.Errorf("update tags for %q: %w", e.Name, err)
+				}
+			}
+			if shouldReplace {
+				if _, err := tx.Exec(ctx, `DELETE FROM memory_observations WHERE entity_id = $1`, id); err != nil {
+					return nil, fmt.Errorf("delete existing observations for %q: %w", e.Name, err)
+				}
 			}
 		}
 
@@ -233,19 +244,19 @@ func (r *postgresMemory) DeleteEntities(ctx context.Context, project string, nam
 	return err
 }
 
-func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error) {
+func (r *postgresMemory) Search(ctx context.Context, project, query string, limit int, queryVec []float32, entityTypes []string, tagsAny []string) ([]entity.SearchResult, []int, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	if queryVec != nil {
-		return r.searchHybrid(ctx, project, query, limit, queryVec)
+		return r.searchHybrid(ctx, project, query, limit, queryVec, entityTypes, tagsAny)
 	}
-	return r.searchLexical(ctx, project, query, limit)
+	return r.searchLexical(ctx, project, query, limit, entityTypes, tagsAny)
 }
 
 // searchLexical is the Phase 1 path: ts_rank × avg_conf × recency. No semantic.
-func (r *postgresMemory) searchLexical(ctx context.Context, project, query string, limit int) ([]entity.SearchResult, []int, error) {
-	rows, err := r.pool.Query(ctx, `
+func (r *postgresMemory) searchLexical(ctx context.Context, project, query string, limit int, entityTypes []string, tagsAny []string) ([]entity.SearchResult, []int, error) {
+	sqlStr := `
 		SELECT id, name, entity_type, avg_conf,
 		       (ts_rank(vec, q) * avg_conf * recency_factor) AS final_score
 		FROM (
@@ -255,13 +266,32 @@ func (r *postgresMemory) searchLexical(ctx context.Context, project, query strin
 		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
 		  FROM memory_entities e
 		  LEFT JOIN memory_observations o ON o.entity_id = e.id
-		  WHERE e.project_id = $1
+		  WHERE e.project_id = $1`
+
+	args := []any{project, query}
+	argIdx := 3
+
+	if len(entityTypes) > 0 {
+		sqlStr += fmt.Sprintf(" AND e.entity_type = ANY($%d)", argIdx)
+		args = append(args, entityTypes)
+		argIdx++
+	}
+	if len(tagsAny) > 0 {
+		sqlStr += fmt.Sprintf(" AND e.tags && $%d", argIdx)
+		args = append(args, tagsAny)
+		argIdx++
+	}
+
+	sqlStr += fmt.Sprintf(`
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
 		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
 		WHERE agg.vec @@ q
 		ORDER BY (ts_rank(agg.vec, q) * agg.avg_conf * agg.recency_factor) DESC
-		LIMIT $3`, project, query, limit)
+		LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, sqlStr, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -281,9 +311,10 @@ func (r *postgresMemory) searchLexical(ctx context.Context, project, query strin
 // searchHybrid fuses lexical (ts_rank, weight 0.3) and semantic (cosine, weight 0.7).
 // Semantic candidates come from ivfflat ANN top-K per observation (cosine sim >= 0.2).
 // Entities match via either path; final_score = hybrid × avg_conf × recency.
-func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string, limit int, queryVec []float32) ([]entity.SearchResult, []int, error) {
+func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string, limit int, queryVec []float32, entityTypes []string, tagsAny []string) ([]entity.SearchResult, []int, error) {
 	vecStr := vecLiteral(queryVec)
-	rows, err := r.pool.Query(ctx, `
+
+	sqlStr := `
 		SELECT id, name, entity_type, avg_conf,
 		       (ts_rank(agg.vec, q) * 0.3 + COALESCE(sem.sem_score, 0) * 0.7) * agg.avg_conf * agg.recency_factor AS final_score
 		FROM (
@@ -293,7 +324,23 @@ func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string
 		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
 		  FROM memory_entities e
 		  LEFT JOIN memory_observations o ON o.entity_id = e.id
-		  WHERE e.project_id = $1
+		  WHERE e.project_id = $1`
+
+	args := []any{project, query, vecStr}
+	argIdx := 4
+
+	if len(entityTypes) > 0 {
+		sqlStr += fmt.Sprintf(" AND e.entity_type = ANY($%d)", argIdx)
+		args = append(args, entityTypes)
+		argIdx++
+	}
+	if len(tagsAny) > 0 {
+		sqlStr += fmt.Sprintf(" AND e.tags && $%d", argIdx)
+		args = append(args, tagsAny)
+		argIdx++
+	}
+
+	sqlStr += fmt.Sprintf(`
 		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
 		) agg
 		CROSS JOIN websearch_to_tsquery('simple', $2) AS q
@@ -304,7 +351,10 @@ func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string
 		) sem ON sem.sem_score >= 0.2
 		WHERE agg.vec @@ q OR sem.sem_score IS NOT NULL
 		ORDER BY (ts_rank(agg.vec, q) * 0.3 + COALESCE(sem.sem_score, 0) * 0.7) * agg.avg_conf * agg.recency_factor DESC
-		LIMIT $4`, project, query, vecStr, limit)
+		LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, sqlStr, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -318,7 +368,6 @@ func (r *postgresMemory) searchHybrid(ctx context.Context, project, query string
 		}
 		found = append(found, rr)
 	}
-
 	return r.fetchResults(ctx, found)
 }
 
