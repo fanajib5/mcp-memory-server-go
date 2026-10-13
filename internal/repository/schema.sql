@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS memory_entity_types (
     name TEXT PRIMARY KEY
 );
 INSERT INTO memory_entity_types (name) VALUES
-    ('project'), ('person'), ('decision'), ('tool'), ('concept'), ('place')
+    ('project'), ('person'), ('decision'), ('tool'), ('concept'), ('place'),
+    ('task'), ('checkpoint'), ('checkpoint_trail')
 ON CONFLICT (name) DO NOTHING;
 
 -- ---- Entities (feature #1: project_id isolation) ----
@@ -49,7 +50,9 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+ALTER TABLE memory_entities ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_entities_project ON memory_entities (project_id);
+CREATE INDEX IF NOT EXISTS idx_entities_tags ON memory_entities USING GIN (tags);
 
 -- ---- Observations ----
 CREATE TABLE IF NOT EXISTS memory_observations (
@@ -98,6 +101,10 @@ CREATE TRIGGER trg_touch_entities
 -- confidence: per-observation AI keyakinan (0.0-1.0, nullable NULL=netral).
 --   Scoring treatas NULL as 1.0 via COALESCE.
 ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS confidence REAL;
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS session_id TEXT;
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS agent_label TEXT;
+ALTER TABLE memory_observations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 
 -- last_accessed_at: per-entity decay tracking (nullable NULL=belum pernah di-access,
 --   fallback ke created_at untuk hitung umur). Computed-on-read decay, no scheduler.
@@ -141,6 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_observations_embedding
 -- Append-only audit trail. Populated by repo methods (application-level, in tx).
 CREATE TABLE IF NOT EXISTS memory_history (
     id BIGSERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL DEFAULT 'default',
     entity_id INT,
     entity_name TEXT NOT NULL,
     observation_id INT,
@@ -148,6 +156,16 @@ CREATE TABLE IF NOT EXISTS memory_history (
     old_value TEXT,
     new_value TEXT,
     confidence REAL,
+    source TEXT,
+    session_id TEXT,
+    agent_label TEXT,
     happened_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE memory_history ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE memory_history ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE memory_history ADD COLUMN IF NOT EXISTS session_id TEXT;
+ALTER TABLE memory_history ADD COLUMN IF NOT EXISTS agent_label TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_history_entity ON memory_history (entity_name, happened_at DESC);
+CREATE INDEX IF NOT EXISTS idx_history_project_happened ON memory_history (project_id, happened_at DESC);

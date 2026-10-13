@@ -9,6 +9,7 @@ type EntityInput struct {
 	Type         string      `json:"entityType,omitempty" jsonschema:"Registered type: project, person, decision, tool, concept, place"`
 	Observations []string    `json:"observations,omitempty" jsonschema:"Facts about this entity"`
 	Confidences  []float64   `json:"confidences,omitempty" jsonschema:"Optional AI confidence 0.0-1.0 per observation, parallel to observations. Omit or empty = neutral."`
+	Tags         []string    `json:"tags,omitempty" jsonschema:"Optional tags for semantic categorisation or filtering"`
 	Embeddings   [][]float32 `json:"-"` // internal: populated by usecase embedder, never from MCP input
 }
 
@@ -24,6 +25,7 @@ type Entity struct {
 	Name         string   `json:"name"`
 	EntityType   string   `json:"type"`
 	Observations []string `json:"observations"`
+	Tags         []string `json:"tags,omitempty"`
 }
 
 // SearchResult is one entity matched by a search, with its observations and
@@ -152,15 +154,57 @@ type GraphPayload struct {
 	Edges []GraphEdge `json:"edges"`
 }
 
+// Observation represents a stored observation fact with metadata attribution.
+type Observation struct {
+	ID         int      `json:"id"`
+	EntityID   int      `json:"entityId"`
+	Content    string   `json:"content"`
+	Confidence *float64 `json:"confidence,omitempty"`
+	Source     *string  `json:"source,omitempty"`
+	SessionID  *string  `json:"sessionId,omitempty"`
+	AgentLabel *string  `json:"agentLabel,omitempty"`
+	CreatedAt  string   `json:"createdAt"`
+	DeletedAt  *string  `json:"deletedAt,omitempty"`
+}
+
+// Checkpoint represents uncommitted context and current active progress.
+type Checkpoint struct {
+	Focus       string `json:"focus"`
+	Uncommitted string `json:"uncommitted,omitempty"`
+	Blockers    string `json:"blockers,omitempty"`
+	NextStep    string `json:"next_step,omitempty"`
+	SavedAt     string `json:"saved_at,omitempty"`
+	SavedBy     string `json:"saved_by,omitempty"`
+}
+
+// CheckpointResult is the confirmation response when a checkpoint is saved.
+type CheckpointResult struct {
+	Message string `json:"message"`
+}
+
+// SessionBootstrapResult is the full payload returned to an agent starting a session.
+type SessionBootstrapResult struct {
+	Warning         *string        `json:"warning,omitempty"`
+	Checkpoint      *Checkpoint    `json:"checkpoint,omitempty"`
+	BreadcrumbTrail []string       `json:"breadcrumb_trail"`
+	OpenTasks       []Entity       `json:"open_tasks"`
+	RecentDecisions []Entity       `json:"recent_decisions"`
+	TopEntities     []SearchResult `json:"top_entities"`
+}
+
 // ---- Versioning ----
 
 // HistoryEntry is one audit-trail row for an entity/observation mutation.
 type HistoryEntry struct {
 	ID         int64    `json:"id"`
+	ProjectID  string   `json:"projectId"`
 	EntityName string   `json:"entityName"`
 	Action     string   `json:"action"`
 	OldValue   *string  `json:"oldValue,omitempty"`
 	NewValue   *string  `json:"newValue,omitempty"`
 	Confidence *float64 `json:"confidence,omitempty"`
+	Source     *string  `json:"source,omitempty"`
+	SessionID  *string  `json:"sessionId,omitempty"`
+	AgentLabel *string  `json:"agentLabel,omitempty"`
 	HappenedAt string   `json:"happenedAt"`
 }
