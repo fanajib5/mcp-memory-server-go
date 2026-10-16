@@ -246,15 +246,15 @@ preflight `OPTIONS` request, jadi CORS harus diaktifkan.
 
 Set environment variable:
 
-\```env
+```env
 CORS_ALLOWED_ORIGINS=https://your-web-app.example.com
-\```
+```
 
 Atau `*` untuk mengizinkan semua origin (disarankan hanya untuk development):
 
-\```env
+```env
 CORS_ALLOWED_ORIGINS=*
-\```
+```
 
 Jika `CORS_ALLOWED_ORIGINS` kosong, CORS headers tidak akan ditambahkan dan akses dari browser
 akan diblokir oleh same-origin policy.
@@ -263,11 +263,11 @@ akan diblokir oleh same-origin policy.
 
 Web client melakukan POST JSON ke `https://memory.example.com/mcp` dengan header:
 
-\```
+```
 Authorization: Bearer <token dari /oauth/token>
 Content-Type: application/json
 Origin: https://your-web-app.example.com
-\```
+```
 
 Response akan menyertakan CORS headers sehingga browser mengizinkan akses tersebut.
 
