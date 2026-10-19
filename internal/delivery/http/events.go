@@ -44,7 +44,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no") // disable Nginx buffering
 
 	// Send a comment heartbeat so the client knows the stream is alive.
-	fmt.Fprintf(w, ": connected to project %s\n\n", project)
+	_, _ = fmt.Fprintf(w, ": connected to project %s\n\n", project)
 	flusher.Flush()
 
 	ch, unsub := h.bus.Subscribe(project)
@@ -66,11 +66,11 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		case <-ticker.C:
 			// Heartbeat comment keeps connection alive through proxies.
-			fmt.Fprintf(w, ": heartbeat\n\n")
+			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		}
 	}

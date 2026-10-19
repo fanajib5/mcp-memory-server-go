@@ -45,7 +45,7 @@ func (c *KiloGatewayClient) Chat(ctx context.Context, req ChatRequest) (*ChatRes
 	if err != nil {
 		return nil, fmt.Errorf("llm chat: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)

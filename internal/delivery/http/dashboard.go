@@ -59,5 +59,5 @@ func (u *UI) HandleGraphJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(g)
+	_ = json.NewEncoder(w).Encode(g)
 }

@@ -15,7 +15,7 @@ func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read old content + entity name before delete (for history).
 	var entityID int
@@ -33,7 +33,7 @@ func (r *postgresMemory) DeleteObservation(ctx context.Context, project string, 
 		return err
 	}
 
-	tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
+	_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
 		project, entityID, entityName, id, oldContent)
 
 	return tx.Commit(ctx)
@@ -44,7 +44,7 @@ func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Read old content + entity for history.
 	var entityID int
@@ -58,18 +58,16 @@ func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, 
 		return fmt.Errorf("observation not found in project %q: %w", project, err)
 	}
 
-	confExpr := "confidence"
-	embExpr := "embedding"
 	setClauses := "content = $3"
 	var args []any
 	args = append(args, id, project, content)
 	if newConfidence != nil {
-		confExpr = fmt.Sprintf("$%d", len(args)+1)
+		confExpr := fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
 		setClauses += ", confidence = " + confExpr
 	}
 	if newEmbedding != nil {
-		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
+		embExpr := fmt.Sprintf("$%d::vector", len(args)+1)
 		args = append(args, vecLiteral(newEmbedding))
 		setClauses += ", embedding = " + embExpr
 	}
@@ -87,7 +85,7 @@ func (r *postgresMemory) UpdateObservation(ctx context.Context, project string, 
 
 	// History: capture content change.
 	if oldContent != content {
-		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
+		_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
 			project, entityID, entityName, id, oldContent, content)
 	}
 
@@ -99,7 +97,7 @@ func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var entityID, obsID int
 	err = tx.QueryRow(ctx, `
@@ -115,7 +113,7 @@ func (r *postgresMemory) DeleteObservationByContent(ctx context.Context, project
 		return err
 	}
 
-	tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
+	_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value) VALUES ($1, $2, $3, $4, 'observation_deleted', $5)`,
 		project, entityID, entityName, obsID, content)
 
 	return tx.Commit(ctx)
@@ -126,7 +124,7 @@ func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var entityID, obsID int
 	err = tx.QueryRow(ctx, `
@@ -138,18 +136,16 @@ func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project
 		return fmt.Errorf("observation %q not found on entity %q in project %q", oldContent, entityName, project)
 	}
 
-	confExpr := "confidence"
-	embExpr := "embedding"
 	setClauses := "content = $3"
 	var args []any
 	args = append(args, obsID, project, newContent)
 	if newConfidence != nil {
-		confExpr = fmt.Sprintf("$%d", len(args)+1)
+		confExpr := fmt.Sprintf("$%d", len(args)+1)
 		args = append(args, *newConfidence)
 		setClauses += ", confidence = " + confExpr
 	}
 	if newEmbedding != nil {
-		embExpr = fmt.Sprintf("$%d::vector", len(args)+1)
+		embExpr := fmt.Sprintf("$%d::vector", len(args)+1)
 		args = append(args, vecLiteral(newEmbedding))
 		setClauses += ", embedding = " + embExpr
 	}
@@ -162,7 +158,7 @@ func (r *postgresMemory) UpdateObservationByContent(ctx context.Context, project
 	}
 
 	if oldContent != newContent {
-		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
+		_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, observation_id, action, old_value, new_value) VALUES ($1, $2, $3, $4, 'observation_updated', $5, $6)`,
 			project, entityID, entityName, obsID, oldContent, newContent)
 	}
 

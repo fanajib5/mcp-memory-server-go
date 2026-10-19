@@ -17,9 +17,11 @@ func TestPruneKeepsNewest(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create 5 backup files with sequential timestamps.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		name := filepath.Join(dir, "memory-backup-2026-01-0"+string(rune('1'+i))+"-120000.json")
-		os.WriteFile(name, []byte("{}"), 0o644)
+		if err := os.WriteFile(name, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
 		// Small delay so modification order is deterministic across filesystems.
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -37,8 +39,12 @@ func TestPruneKeepsNewest(t *testing.T) {
 
 func TestPruneNoopUnderRetention(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-01-120000.json"), []byte("{}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-02-120000.json"), []byte("{}"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-01-120000.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-02-120000.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
 
 	s := &Scheduler{dir: dir, retention: 7}
 	if err := s.prune(); err != nil {
@@ -53,9 +59,15 @@ func TestPruneNoopUnderRetention(t *testing.T) {
 
 func TestPruneIgnoresNonBackups(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-01-120000.json"), []byte("{}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "random.json"), []byte("{}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hi"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "memory-backup-2026-01-01-120000.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "random.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
 
 	s := &Scheduler{dir: dir, retention: 0}
 	if err := s.prune(); err != nil {

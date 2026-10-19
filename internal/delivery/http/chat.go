@@ -105,10 +105,10 @@ func (h *ChatHandler) HandleModels(ui *UI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		models, err := h.uc.ListModels(r.Context())
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]any{"models": []string{"kilo-auto/free"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"models": []string{"kilo-auto/free"}})
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"models": models})
+		_ = json.NewEncoder(w).Encode(map[string]any{"models": models})
 	}
 }
 

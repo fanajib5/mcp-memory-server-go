@@ -16,8 +16,9 @@ import (
 )
 
 // MemoryRepository is the data-access boundary for the knowledge graph.
-// Implementations receive already-normalized values (project non-empty, entity
-// types/relation types normalized) — domain rules live in the usecase layer.
+// Implementations receive already-normalized values (project non-empty unless
+// the operation documents "" = all namespaces, entity types/relation types
+// normalized) — domain rules live in the usecase layer.
 type MemoryRepository interface {
 	CreateEntities(ctx context.Context, project string, entities []entity.EntityInput, replaceObs ...bool) ([]string, error)
 	AddObservations(ctx context.Context, project, entityName string, observations []string, confidences []float64, embeddings [][]float32, attr ...entity.Attribution) error
@@ -59,7 +60,7 @@ func (r *postgresMemory) CreateEntities(ctx context.Context, project string, ent
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var created []string
 	for _, e := range entities {
@@ -135,7 +136,7 @@ func (r *postgresMemory) AddObservations(ctx context.Context, project, entityNam
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var id int
 	err = tx.QueryRow(ctx, `SELECT id FROM memory_entities WHERE project_id = $1 AND name = $2`, project, entityName).Scan(&id)
@@ -184,7 +185,7 @@ func (r *postgresMemory) CreateRelations(ctx context.Context, project string, re
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// getID resolves an entity by (project, name), creating it as 'concept' if absent.
 	getID := func(name string) (int, error) {
@@ -239,7 +240,7 @@ func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, new
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var id int
 	var oldType string
@@ -270,11 +271,11 @@ func (r *postgresMemory) UpdateEntity(ctx context.Context, project, oldName, new
 	// History: capture rename and/or type change. entity_name = current (post-mutation) name
 	// so GetHistory (queried by current name) finds both events.
 	if newName != oldName {
-		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_renamed', $4, $5)`,
+		_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_renamed', $4, $5)`,
 			project, id, newName, oldName, newName)
 	}
 	if entityType != oldType {
-		tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_type_changed', $4, $5)`,
+		_, _ = tx.Exec(ctx, `INSERT INTO memory_history (project_id, entity_id, entity_name, action, old_value, new_value) VALUES ($1, $2, $3, 'entity_type_changed', $4, $5)`,
 			project, id, newName, oldType, entityType)
 	}
 

@@ -18,18 +18,24 @@ func TestHistoryObservationEdit(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "histproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "histproj", []entity.EntityInput{
 		{Name: "E", Type: "project", Observations: []string{"original"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 
 	d, _ := h.stats.GetEntityDetail(ctx, "histproj", "E")
 	obsID := d.Observations[0].ID
 
 	// Edit via content match.
-	h.mem.UpdateObservationByContent(ctx, "histproj", "E", "original", "edited", nil)
+	if err := h.mem.UpdateObservationByContent(ctx, "histproj", "E", "original", "edited", nil); err != nil {
+		t.Fatalf("update obs: %v", err)
+	}
 
 	// Edit via ID.
-	h.mem.UpdateObservation(ctx, "histproj", obsID, "edited again", nil)
+	if err := h.mem.UpdateObservation(ctx, "histproj", obsID, "edited again", nil); err != nil {
+		t.Fatalf("update obs: %v", err)
+	}
 
 	hist, err := h.mem.GetHistory(ctx, "histproj", "E", 10)
 	if err != nil {
@@ -55,13 +61,17 @@ func TestHistoryObservationDelete(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "delproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "delproj", []entity.EntityInput{
 		{Name: "D", Type: "project", Observations: []string{"doomed fact"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	d, _ := h.stats.GetEntityDetail(ctx, "delproj", "D")
 	obsID := d.Observations[0].ID
 
-	h.mem.DeleteObservation(ctx, "delproj", obsID)
+	if err := h.mem.DeleteObservation(ctx, "delproj", obsID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
 
 	hist, _ := h.mem.GetHistory(ctx, "delproj", "D", 10)
 	if len(hist) != 2 {
@@ -83,11 +93,15 @@ func TestHistoryEntityRename(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "renproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "renproj", []entity.EntityInput{
 		{Name: "OldName", Type: "project"},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	// Rename only (same type) so we get exactly 1 history entry.
-	h.mem.UpdateEntity(ctx, "renproj", "OldName", "NewName", "project")
+	if err := h.mem.UpdateEntity(ctx, "renproj", "OldName", "NewName", "project"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
 
 	hist, _ := h.mem.GetHistory(ctx, "renproj", "NewName", 10)
 	if len(hist) != 1 {
@@ -103,10 +117,14 @@ func TestHistoryEntityTypeChange(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "typeproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "typeproj", []entity.EntityInput{
 		{Name: "T", Type: "project"},
-	})
-	h.mem.UpdateEntity(ctx, "typeproj", "T", "T", "tool")
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := h.mem.UpdateEntity(ctx, "typeproj", "T", "T", "tool"); err != nil {
+		t.Fatalf("type change: %v", err)
+	}
 
 	hist, _ := h.mem.GetHistory(ctx, "typeproj", "T", 10)
 	found := false
@@ -131,11 +149,15 @@ func TestHistoryEmptyForUnchangedEdit(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "unchproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "unchproj", []entity.EntityInput{
 		{Name: "U", Type: "project", Observations: []string{"stable"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	// Update with same content — should NOT create a history entry.
-	h.mem.UpdateObservationByContent(ctx, "unchproj", "U", "stable", "stable", nil)
+	if err := h.mem.UpdateObservationByContent(ctx, "unchproj", "U", "stable", "stable", nil); err != nil {
+		t.Fatalf("update obs: %v", err)
+	}
 
 	hist, _ := h.mem.GetHistory(ctx, "unchproj", "U", 10)
 	if len(hist) != 1 {
@@ -152,9 +174,11 @@ func TestHistoryObservationCreatedLogging(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. CreateEntities should log observation_created
-	h.mem.CreateEntities(ctx, "auditproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "auditproj", []entity.EntityInput{
 		{Name: "Alpha", Type: "project", Observations: []string{"fact 1", "fact 2"}},
-	})
+	}); err != nil {
+		t.Fatalf("create Alpha: %v", err)
+	}
 
 	hist, err := h.mem.GetHistory(ctx, "auditproj", "Alpha", 10)
 	if err != nil {
@@ -273,12 +297,16 @@ func TestHistoryProjectIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create entity with same name in two different projects
-	h.mem.CreateEntities(ctx, "proj1", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "proj1", []entity.EntityInput{
 		{Name: "SharedName", Type: "concept", Observations: []string{"proj1 fact"}},
-	})
-	h.mem.CreateEntities(ctx, "proj2", []entity.EntityInput{
+	}); err != nil {
+		t.Fatalf("create proj1: %v", err)
+	}
+	if _, err := h.mem.CreateEntities(ctx, "proj2", []entity.EntityInput{
 		{Name: "SharedName", Type: "concept", Observations: []string{"proj2 fact"}},
-	})
+	}); err != nil {
+		t.Fatalf("create proj2: %v", err)
+	}
 
 	hist1, err := h.mem.GetHistory(ctx, "proj1", "SharedName", 10)
 	if err != nil {

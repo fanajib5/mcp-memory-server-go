@@ -42,7 +42,9 @@ func TestEmbedOnWriteStored(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.AddObservations(ctx, "embproj", "A", []string{"embedded fact"}, nil)
+	if err := h.mem.AddObservations(ctx, "embproj", "A", []string{"embedded fact"}, nil); err != nil {
+		t.Fatalf("add obs: %v", err)
+	}
 
 	var embCount int
 	err := h.pool.QueryRow(ctx,
@@ -63,8 +65,12 @@ func TestSemanticSearchNoError(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.AddObservations(ctx, "semproj", "A", []string{"semantic test content"}, nil)
-	h.mem.AddObservations(ctx, "semproj", "B", []string{"unrelated stuff"}, nil)
+	if err := h.mem.AddObservations(ctx, "semproj", "A", []string{"semantic test content"}, nil); err != nil {
+		t.Fatalf("add obs A: %v", err)
+	}
+	if err := h.mem.AddObservations(ctx, "semproj", "B", []string{"unrelated stuff"}, nil); err != nil {
+		t.Fatalf("add obs B: %v", err)
+	}
 
 	results, err := h.mem.Search(ctx, "semproj", "semantic", 10)
 	if err != nil {
@@ -82,9 +88,11 @@ func TestSearchFallbackNilEmbedder(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "fallbackproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "fallbackproj", []entity.EntityInput{
 		{Name: "X", Type: "project", Observations: []string{"fallback keyword"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	results, err := h.mem.Search(ctx, "fallbackproj", "fallback", 10)
 	if err != nil {
 		t.Fatalf("lexical fallback search: %v", err)
@@ -102,16 +110,22 @@ func TestBackfillEmbedsExisting(t *testing.T) {
 	ctx := context.Background()
 
 	// Create observation without embedding (nil embedder).
-	h.mem.CreateEntities(ctx, "bfproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "bfproj", []entity.EntityInput{
 		{Name: "B", Type: "project", Observations: []string{"no embedding yet"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	var obsID int
-	h.pool.QueryRow(ctx,
-		`SELECT o.id FROM memory_observations o JOIN memory_entities e ON e.id=o.entity_id WHERE e.name='B'`).Scan(&obsID)
+	if err := h.pool.QueryRow(ctx,
+		`SELECT o.id FROM memory_observations o JOIN memory_entities e ON e.id=o.entity_id WHERE e.name='B'`).Scan(&obsID); err != nil {
+		t.Fatalf("scan obsID: %v", err)
+	}
 
 	// Verify NULL before backfill.
 	var nullCount int
-	h.pool.QueryRow(ctx, `SELECT count(*) FROM memory_observations WHERE id=$1 AND embedding IS NULL`, obsID).Scan(&nullCount)
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM memory_observations WHERE id=$1 AND embedding IS NULL`, obsID).Scan(&nullCount); err != nil {
+		t.Fatalf("scan nullCount: %v", err)
+	}
 	if nullCount != 1 {
 		t.Fatalf("expected NULL embedding before backfill, got count=%d", nullCount)
 	}
@@ -123,7 +137,9 @@ func TestBackfillEmbedsExisting(t *testing.T) {
 	}
 
 	var embCount int
-	h.pool.QueryRow(ctx, `SELECT count(*) FROM memory_observations WHERE id=$1 AND embedding IS NOT NULL`, obsID).Scan(&embCount)
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM memory_observations WHERE id=$1 AND embedding IS NOT NULL`, obsID).Scan(&embCount); err != nil {
+		t.Fatalf("scan embCount: %v", err)
+	}
 	if embCount != 1 {
 		t.Fatalf("expected non-NULL embedding after backfill, got count=%d", embCount)
 	}

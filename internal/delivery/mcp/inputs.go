@@ -39,7 +39,7 @@ type DeleteEntitiesInput struct {
 }
 
 type SearchInput struct {
-	Project     string   `json:"project,omitempty" jsonschema:"Optional project/namespace; defaults to 'default'"`
+	Project     string   `json:"project,omitempty" jsonschema:"Optional project/namespace; blank = all namespaces (each result carries its project)"`
 	Query       string   `json:"query"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"Max results, default 20, max 100"`
 	EntityTypes []string `json:"entity_types,omitempty" jsonschema:"Optional list of entity types to filter by (e.g. ['decision', 'task'])"`

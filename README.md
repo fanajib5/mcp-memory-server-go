@@ -53,11 +53,12 @@ Tools diekspos via MCP Streamable HTTP. Seluruh tool menerima parameter opsional
 untuk mengisolasi graph per-project — lihat [Project isolation & validasi type](#project-isolation--validasi-type).
 
 ### Core Knowledge Graph Tools
+
 - `memory_create_entities` — bikin entity baru + observasi awal; reuse entity kalau `(project, name)` sudah ada (menerima `tags`, `source`, `agent_label`, `session_id`)
 - `memory_add_observations` — tambah fakta ke entity; bikin entity-nya kalau belum ada (menerima `source`, `agent_label`, `session_id`)
 - `memory_create_relations` — hubungkan entity, format `A --RELATION_TYPE--> B` (active voice, UPPER_SNAKE_CASE)
 - `memory_delete_entities` — hapus entity (cascade ke observasi & relasi)
-- `memory_search` — cari entity berdasarkan nama/isi observasi. Mendukung filter `entity_types` (array tipe entity) dan `tags_any` (array tag)
+- `memory_search` — cari entity berdasarkan nama/isi observasi (fallback substring untuk bentuk identifier seperti `pg_hba`). `project` kosong = cari lintas semua namespace; tiap hasil membawa field `project`. Mendukung filter `entity_types` (array tipe entity) dan `tags_any` (array tag)
 - `memory_read_graph` — dump graph satu project (atau semua project kalau `project` kosong); untuk debugging
 - `memory_rename_entity` — ganti nama dan/atau tipe entity
 - `memory_update_observation` — edit teks observasi berdasarkan pencocokan teks lama
@@ -66,11 +67,13 @@ untuk mengisolasi graph per-project — lihat [Project isolation & validasi type
 - `memory_get_history` — ambil riwayat audit perubahan satu entity dalam project
 
 ### Shared Working Brain Tools (Multi-Agent & Continuity)
+
 - `memory_session_bootstrap` — muat working context di awal sesi: checkpoint aktif terakhir, rekam jejak naratif (`breadcrumb_trail` maks 20 entri terbaru), open tasks, recent decisions, dan top entities. Memberikan peringatan jika `agent_label` belum disetel.
 - `memory_save_checkpoint` — simpan checkpoint pekerjaan aktif (`focus`, `uncommitted`, `blockers`, `next_step`) dan tambahkan ringkasan naratif ke trail saat jeda/selesai sesi.
 - `memory_timeline` — ambil urutan kronologis perubahan dan observasi naratif dalam project (mendukung filter `since`, `limit`, `entity_name`, `source`).
 
 ### Backup & Portabilitas
+
 - `memory_export` — export graph (entities + relations) sebagai JSON terstruktur untuk backup/migrasi
 - `memory_import` — import JSON ke sebuah project; idempoten (skip yang sudah ada)
 
@@ -78,12 +81,15 @@ untuk mengisolasi graph per-project — lihat [Project isolation & validasi type
 
 **Project isolation.** Setiap entity dimiliki satu `project_id` (default `"default"`), dan identitas
 entity adalah komposit `(project_id, name)` — nama yang sama boleh ada di project berbeda tanpa
-bentrok. Semua tool menerima `project` opsional; search/delete/read hanya menyentuh entity di project
-itu. Ini menjaga konteks antar-project tetap terpisah (konteks project A tidak akan nyangkut di hasil
-search project B). Client lama yang tidak mengirim `project` otomatis jatuh ke `"default"`, jadi
-tetap backward-compatible.
+bentrok. Semua tool menerima `project` opsional; write/delete hanya menyentuh entity di project itu.
+Untuk `memory_search`, `project` kosong berarti cari lintas semua namespace dan tiap hasil membawa
+field `project` (konsisten dengan `memory_read_graph`/`memory_export` yang juga bermakna "semua
+project" saat kosong) — jadi agen tidak perlu menebak namespace untuk menemukan fakta. Client lama
+yang tidak mengirim `project` pada operasi tulis otomatis jatuh ke `"default"`, jadi tetap
+backward-compatible.
 
 **Validasi type.** Menjaga graph rapi supaya bisa diandalkan untuk query terstruktur:
+
 - `entity_type` harus merupakan type terdaftar di tabel lookup `memory_entity_types` (di-seed:
   `project`, `person`, `decision`, `tool`, `concept`, `place`, `task`, `checkpoint`, `checkpoint_trail`).
   Nilai tak terdaftar ditolak oleh foreign key di Postgres. Menambah type baru = `INSERT` satu baris ke tabel lookup.
@@ -103,23 +109,27 @@ docker compose up --build
 ```
 
 Cek health check:
+
 ```bash
 curl http://localhost:3000/health
 # harus balas: {"status":"ok"}
 ```
 
 Cek OAuth metadata:
+
 ```bash
 curl https://localhost:3000/.well-known/oauth-authorization-server
 ```
 
 Ambil access token:
+
 ```bash
 curl -X POST https://localhost:3000/oauth/token \
   -d "client_id=myclient&client_secret=mysecret"
 ```
 
 Uji MCP endpoint dengan MCP Inspector:
+
 ```bash
 npx @modelcontextprotocol/inspector
 # connect ke https://localhost:3000/mcp dengan header Authorization: Bearer <token dari /oauth/token>
@@ -146,6 +156,7 @@ npx @modelcontextprotocol/inspector
 6. Deploy, lalu pastikan `https://memory.example.com/health` membalas `{"status":"ok"}`.
 
 ### Keamanan tambahan (opsional tapi disarankan)
+
 - Bearer token diverifikasi dengan `crypto/subtle.ConstantTimeCompare` (constant-time), tahan
   timing-attack — tetap pastikan token tidak terekspos di log atau tempat publik.
 - Batasi akses via firewall / IP allowlist Coolify jika IP client statis.
@@ -153,6 +164,7 @@ npx @modelcontextprotocol/inspector
 - Jangan commit file `.env` ke Git.
 
 ### Troubleshooting OAuth redirect error
+
 Jika OAuth metadata menghasilkan URL seperti `https://0.0.0.0:3000`, itu berarti env `PUBLIC_URL`
 belum di-set. Isi `PUBLIC_URL=https://memory.najib.id` di Coolify, lalu redeploy. Jangan pakai
 `HOST=0.0.0.0` sebagai public URL — itu hanya bind address internal container.
@@ -282,14 +294,18 @@ Server ini mengimplementasikan **Shared Working Brain Protocol** untuk menjamin 
 lintas device dan multi-agent (Claude Code, Antigravity, Kilo Code, dll.).
 
 ### Multi-Agent Attribution Environment Variables
+
 Setel di environment sistem atau client runner:
+
 ```bash
 export MCP_AGENT_LABEL="Claude Code @ laptop kantor"
 export MCP_SOURCE="claude-code"
 ```
+
 Jika `MCP_AGENT_LABEL` belum disetel, `memory_session_bootstrap` akan mengembalikan `warning` agar user diingatkan untuk melengkapi identitas mesin/agent.
 
 ### Lifecycle Kerja Agent
+
 1. **Awal Sesi (Bootstrap)**: Selalu panggil `memory_session_bootstrap(project, focus?)` di awal setiap sesi.
    Tool ini mengembalikan `checkpoint` aktif sesi terakhir (`focus`, `uncommitted`, `blockers`, `next_step`),
    `breadcrumb_trail` (maks 20 narasi jejak progres terbaru), `open_tasks`, `recent_decisions`, dan `top_entities`.
@@ -311,13 +327,13 @@ Lihat panduan lengkap di [`AGENTS.md`](./AGENTS.md).
 
 ## Kenapa Go (dan bukan Node / Rust)
 
-| | Node/TypeScript | Go |
-|---|---|---|
-| Base image size | ~150-200 MB (node:22-slim) | ~15-25 MB (distroless static, `CGO_ENABLED=0`, `nonroot`) |
-| RAM idle | ~80-150 MB | ~10-20 MB |
-| Startup time | ~200-500ms | ~10-50ms |
-| Concurrency model | Event loop (single-threaded JS) | Goroutines (native OS threads, jauh lebih murah untuk request paralel) |
-| Runtime dependency di image | Butuh Node runtime | Nol — binary statis; distroless tanpa shell/package manager |
+|                             | Node/TypeScript                 | Go                                                                     |
+| --------------------------- | ------------------------------- | ---------------------------------------------------------------------- |
+| Base image size             | ~150-200 MB (node:22-slim)      | ~15-25 MB (distroless static, `CGO_ENABLED=0`, `nonroot`)              |
+| RAM idle                    | ~80-150 MB                      | ~10-20 MB                                                              |
+| Startup time                | ~200-500ms                      | ~10-50ms                                                               |
+| Concurrency model           | Event loop (single-threaded JS) | Goroutines (native OS threads, jauh lebih murah untuk request paralel) |
+| Runtime dependency di image | Butuh Node runtime              | Nol — binary statis; distroless tanpa shell/package manager            |
 
 Untuk beban ringan-menengah, perbedaan ini tidak terlalu terasa. Beda nyatanya muncul ketika
 menjalankan banyak service sekaligus di satu VPS kecil (mis. 2GB RAM) — versi Go menyisakan lebih

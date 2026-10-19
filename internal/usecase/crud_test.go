@@ -89,11 +89,15 @@ func TestEditByContentAndTriple(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "editproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "editproj", []entity.EntityInput{
 		{Name: "Delta", Type: "project", Observations: []string{"keep this", "drop this"}},
 		{Name: "Echo", Type: "concept"},
-	})
-	h.mem.CreateRelations(ctx, "editproj", []entity.RelationInput{{From: "Delta", To: "Echo", RelationType: "uses"}})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := h.mem.CreateRelations(ctx, "editproj", []entity.RelationInput{{From: "Delta", To: "Echo", RelationType: "uses"}}); err != nil {
+		t.Fatalf("create rel: %v", err)
+	}
 
 	if err := h.mem.UpdateEntity(ctx, "editproj", "Delta", "DeltaRenamed", "tool"); err != nil {
 		t.Fatalf("rename: %v", err)

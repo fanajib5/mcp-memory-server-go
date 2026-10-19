@@ -35,7 +35,7 @@ func BuildServer(h *Handlers) *mcpgo.Server {
 
 	mcpgo.AddTool(server, &mcpgo.Tool{
 		Name:        "memory_search",
-		Description: "Search a project's knowledge graph for entities matching a query (matches entity names and observation content). Prefer this over memory_read_graph.",
+		Description: "Search a project's knowledge graph for entities matching a query (matches entity names and observation content). Omit project to search all namespaces; each result carries its project. Prefer this over memory_read_graph.",
 	}, h.handleSearch)
 
 	mcpgo.AddTool(server, &mcpgo.Tool{

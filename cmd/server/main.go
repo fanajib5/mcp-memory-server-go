@@ -66,8 +66,7 @@ func main() {
 	statsUC := usecase.NewStatsUseCase(statsRepo)
 
 	// LLM client: Kilo Gateway (or Ollama-compatible). Only wired if API key is set.
-	var llmClient gateway.LLMClient
-	llmClient = gateway.NewKiloGatewayClient(cfg.KiloGatewayBaseURL, cfg.KiloGatewayAPIKey, cfg.KiloGatewayModel)
+	llmClient := gateway.NewKiloGatewayClient(cfg.KiloGatewayBaseURL, cfg.KiloGatewayAPIKey, cfg.KiloGatewayModel)
 
 	chatUC := usecase.NewChatUseCase(llmClient, memUC)
 
@@ -114,7 +113,9 @@ func main() {
 	log.Printf("shutting down...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	httpServer.Shutdown(shutdownCtx)
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
 	log.Printf("stopped")
 }
 

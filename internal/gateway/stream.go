@@ -51,13 +51,13 @@ func (c *KiloGatewayClient) ChatStream(ctx context.Context, req ChatRequest) (<-
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("llm stream: HTTP %d: %s", resp.StatusCode, string(raw))
 	}
 
 	ch := make(chan StreamEvent, 64)
 	go func() {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		defer close(ch)
 
 		scanner := bufio.NewScanner(resp.Body)

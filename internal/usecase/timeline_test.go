@@ -22,13 +22,17 @@ func TestGetTimeline(t *testing.T) {
 	repo := repository.NewMemoryRepository(h.pool)
 
 	// Create entities in timelineproj and otherproj
-	h.mem.CreateEntities(ctx, "timelineproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "timelineproj", []entity.EntityInput{
 		{Name: "EntA", Type: "project", Observations: []string{"event 1"}},
 		{Name: "EntB", Type: "task", Observations: []string{"event 2"}},
-	})
-	h.mem.CreateEntities(ctx, "otherproj", []entity.EntityInput{
+	}); err != nil {
+		t.Fatalf("create timelineproj: %v", err)
+	}
+	if _, err := h.mem.CreateEntities(ctx, "otherproj", []entity.EntityInput{
 		{Name: "EntC", Type: "project", Observations: []string{"event 3"}},
-	})
+	}); err != nil {
+		t.Fatalf("create otherproj: %v", err)
+	}
 
 	// GetTimeline for timelineproj
 	entries, err := repo.GetTimeline(ctx, "timelineproj", time.Time{}, 50, nil, nil)
@@ -57,8 +61,12 @@ func TestGetTimeline(t *testing.T) {
 	// Filter by source
 	srcA := "agent-alpha"
 	srcB := "agent-beta"
-	repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 4"}, nil, nil, entity.Attribution{Source: &srcA})
-	repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 5"}, nil, nil, entity.Attribution{Source: &srcB})
+	if err := repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 4"}, nil, nil, entity.Attribution{Source: &srcA}); err != nil {
+		t.Fatalf("add obs 4: %v", err)
+	}
+	if err := repo.AddObservations(ctx, "timelineproj", "EntA", []string{"event 5"}, nil, nil, entity.Attribution{Source: &srcB}); err != nil {
+		t.Fatalf("add obs 5: %v", err)
+	}
 
 	srcFilter := "agent-alpha"
 	bySource, err := repo.GetTimeline(ctx, "timelineproj", time.Time{}, 50, nil, &srcFilter)

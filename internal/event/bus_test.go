@@ -79,7 +79,7 @@ func TestBufferFullDropsEvent(t *testing.T) {
 	defer unsub()
 
 	// Fill the 16-buffer channel without reading.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		b.Publish("projA", Event{Type: "entity_created"})
 	}
 

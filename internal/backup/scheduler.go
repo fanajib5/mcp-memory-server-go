@@ -26,11 +26,10 @@ import (
 
 // Scheduler runs periodic exports of all memory data to JSON files.
 type Scheduler struct {
-	uc         *usecase.MemoryUseCase
-	dir        string
-	retention  int
-	cronSpec   string
-	cronLogger *log.Logger
+	uc        *usecase.MemoryUseCase
+	dir       string
+	retention int
+	cronSpec  string
 }
 
 // NewScheduler builds a backup scheduler. cronSpec empty = disabled.

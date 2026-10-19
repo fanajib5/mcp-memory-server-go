@@ -33,7 +33,7 @@ func (u *UI) HandleRelationDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id int
-	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	_, _ = fmt.Sscanf(r.FormValue("id"), "%d", &id)
 	_ = u.UC.DeleteRelation(r.Context(), r.FormValue("p"), id)
 	u.renderObsOrRel(w, r, "relations")
 }

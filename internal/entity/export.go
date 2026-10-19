@@ -7,11 +7,14 @@ package entity
 
 // SearchResult is one entity matched by a search, with its observations and
 // relations formatted as "A --R--> B" strings.
+// Project is the namespace the entity lives in — always populated, so results
+// from a cross-namespace (blank project) search remain attributable.
 // Confidence is the entity-level average of observation confidences (nil if all neutral).
 // Score is the combined re-rank score (text relevance × confidence × recency) for debugging.
 type SearchResult struct {
 	Name         string   `json:"name"`
 	Type         string   `json:"type"`
+	Project      string   `json:"project"`
 	Observations []string `json:"observations"`
 	Relations    []string `json:"relations"`
 	Confidence   *float64 `json:"confidence,omitempty"`

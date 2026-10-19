@@ -17,12 +17,16 @@ func TestStatsQueries(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "statsproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "statsproj", []entity.EntityInput{
 		{Name: "Hub", Type: "project", Observations: []string{"a", "b"}},
 		{Name: "Leaf", Type: "concept"},
 		{Name: "Solo", Type: "concept"}, // no observations, no relations -> orphan + sparse
-	})
-	h.mem.CreateRelations(ctx, "statsproj", []entity.RelationInput{{From: "Hub", To: "Leaf", RelationType: "uses"}})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := h.mem.CreateRelations(ctx, "statsproj", []entity.RelationInput{{From: "Hub", To: "Leaf", RelationType: "uses"}}); err != nil {
+		t.Fatalf("create rel: %v", err)
+	}
 
 	d, err := h.stats.GetEntityDetail(ctx, "statsproj", "Hub")
 	if err != nil {
@@ -78,11 +82,15 @@ func TestGraphData(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "graphproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "graphproj", []entity.EntityInput{
 		{Name: "A", Type: "project"},
 		{Name: "B", Type: "tool"},
-	})
-	h.mem.CreateRelations(ctx, "graphproj", []entity.RelationInput{{From: "A", To: "B", RelationType: "uses"}})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := h.mem.CreateRelations(ctx, "graphproj", []entity.RelationInput{{From: "A", To: "B", RelationType: "uses"}}); err != nil {
+		t.Fatalf("create rel: %v", err)
+	}
 
 	g, err := h.stats.GraphData(ctx, "graphproj")
 	if err != nil {

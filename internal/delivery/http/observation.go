@@ -39,7 +39,7 @@ func (u *UI) HandleObservationDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id int
-	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	_, _ = fmt.Sscanf(r.FormValue("id"), "%d", &id)
 	_ = u.UC.DeleteObservation(r.Context(), r.FormValue("p"), id)
 	u.renderObsOrRel(w, r, "observations")
 }
@@ -47,7 +47,7 @@ func (u *UI) HandleObservationDelete(w http.ResponseWriter, r *http.Request) {
 // HandleObservationEditGet returns an inline edit form for one observation.
 func (u *UI) HandleObservationEditGet(w http.ResponseWriter, r *http.Request) {
 	var id int
-	fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
+	_, _ = fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
 	p := r.URL.Query().Get("p")
 	if p == "" {
 		p = activeProject(r)
@@ -69,7 +69,7 @@ func (u *UI) HandleObservationEditSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id int
-	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	_, _ = fmt.Sscanf(r.FormValue("id"), "%d", &id)
 	p := r.FormValue("p")
 	// Optional confidence from the UI form (empty = leave unchanged).
 	var newConf *float64
@@ -89,7 +89,7 @@ func (u *UI) HandleObservationEditSave(w http.ResponseWriter, r *http.Request) {
 // HandleObservationRow returns the read-only row for one observation (cancel-edit target).
 func (u *UI) HandleObservationRow(w http.ResponseWriter, r *http.Request) {
 	var id int
-	fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
+	_, _ = fmt.Sscanf(r.URL.Query().Get("id"), "%d", &id)
 	p := r.URL.Query().Get("p")
 	if p == "" {
 		p = activeProject(r)

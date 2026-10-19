@@ -104,7 +104,7 @@ func (r *postgresMemory) Import(ctx context.Context, project string, g *entity.E
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	getOrCreate := func(name string) (int, error) {
 		var id int

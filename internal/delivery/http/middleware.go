@@ -102,7 +102,7 @@ func NewSession(cfg *config.Config) *Session {
 // signCookieValue produces "<expiry>.<base64url(HMAC-SHA256(secret, expiry))>".
 func (s *Session) signCookieValue(expiry int64) string {
 	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	fmt.Fprintf(mac, "%d", expiry)
+	_, _ = fmt.Fprintf(mac, "%d", expiry)
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return fmt.Sprintf("%d.%s", expiry, sig)
 }
@@ -117,7 +117,7 @@ func (s *Session) verifyCookieValue(v string) bool {
 		return false
 	}
 	mac := hmac.New(sha256.New, []byte(s.cfg.JWTSecret))
-	fmt.Fprintf(mac, "%d", expiry)
+	_, _ = fmt.Fprintf(mac, "%d", expiry)
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(parts[1]), []byte(expected)) {
 		return false

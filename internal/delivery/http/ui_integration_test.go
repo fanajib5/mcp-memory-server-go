@@ -136,9 +136,11 @@ func TestBackupExportImport(t *testing.T) {
 	}
 
 	// Seed an entity, then export it as JSON.
-	ui.UC.CreateEntities(ctx, "default", []entity.EntityInput{
+	if _, err := ui.UC.CreateEntities(ctx, "default", []entity.EntityInput{
 		{Name: "Seed", Type: "tool", Observations: []string{"seed fact"}},
-	})
+	}); err != nil {
+		t.Fatalf("create seed: %v", err)
+	}
 
 	ereq := httptest.NewRequest(http.MethodGet, "/ui/export?p=default", nil)
 	ereq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sess, Path: "/ui"})
@@ -158,13 +160,30 @@ func TestBackupExportImport(t *testing.T) {
 	// Import the exported JSON into a DIFFERENT project via multipart upload (with csrf).
 	body := &bytes.Buffer{}
 	mw := multipart.NewWriter(body)
-	fw, _ := mw.CreateFormField("p")
-	fw.Write([]byte("imported"))
-	fw2, _ := mw.CreateFormField("csrf")
-	fw2.Write([]byte(csrf))
-	ff, _ := mw.CreateFormFile("file", "backup.json")
-	ff.Write(ew.Body.Bytes())
-	mw.Close()
+	fw, err := mw.CreateFormField("p")
+	if err != nil {
+		t.Fatalf("create form field p: %v", err)
+	}
+	if _, err := fw.Write([]byte("imported")); err != nil {
+		t.Fatalf("write form field p: %v", err)
+	}
+	fw2, err := mw.CreateFormField("csrf")
+	if err != nil {
+		t.Fatalf("create form field csrf: %v", err)
+	}
+	if _, err := fw2.Write([]byte(csrf)); err != nil {
+		t.Fatalf("write form field csrf: %v", err)
+	}
+	ff, err := mw.CreateFormFile("file", "backup.json")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := ff.Write(ew.Body.Bytes()); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
 
 	ireq := httptest.NewRequest(http.MethodPost, "/ui/import", body)
 	ireq.Header.Set("Content-Type", "multipart/form-data; boundary="+mw.Boundary())
@@ -190,9 +209,11 @@ func TestInlineEditObservation(t *testing.T) {
 	ui := uiTestHarness(t)
 	ctx := context.Background()
 
-	ui.UC.CreateEntities(ctx, "default", []entity.EntityInput{
+	if _, err := ui.UC.CreateEntities(ctx, "default", []entity.EntityInput{
 		{Name: "Inline", Type: "tool", Observations: []string{"original text"}},
-	})
+	}); err != nil {
+		t.Fatalf("create inline entity: %v", err)
+	}
 	d, _ := ui.SU.GetEntityDetail(ctx, "default", "Inline")
 	id := d.Observations[0].ID
 

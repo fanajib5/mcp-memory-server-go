@@ -8,6 +8,7 @@ package usecase
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"mcp-memory-server/internal/entity"
@@ -16,9 +17,10 @@ import (
 // Search runs the query, then best-effort bumps last_accessed_at for every
 // matched entity (retrieval = access). A touch failure is logged, not fatal,
 // so a search never fails due to access-tracking.
+// project == "" searches all namespaces; every result carries its project.
 // Optional filters: filterParams[0] = entityTypes []string, filterParams[1] = tagsAny []string.
 func (u *MemoryUseCase) Search(ctx context.Context, project, query string, limit int, filterParams ...[]string) ([]entity.SearchResult, error) {
-	project = defaultProject(project)
+	project = strings.TrimSpace(project)
 	if limit <= 0 {
 		limit = 20
 	}

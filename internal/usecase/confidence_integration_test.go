@@ -89,7 +89,9 @@ func TestConfidenceNeutral(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.AddObservations(ctx, "neutralproj", "A", []string{"no confidence given"}, nil)
+	if err := h.mem.AddObservations(ctx, "neutralproj", "A", []string{"no confidence given"}, nil); err != nil {
+		t.Fatalf("add obs: %v", err)
+	}
 	d, _ := h.stats.GetEntityDetail(ctx, "neutralproj", "A")
 	if d.Observations[0].Confidence != nil {
 		t.Fatalf("neutral confidence = %v, want nil", d.Observations[0].Confidence)
@@ -102,9 +104,11 @@ func TestSearchAccessTouch(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "touchproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "touchproj", []entity.EntityInput{
 		{Name: "X", Type: "project", Observations: []string{"matchable"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	// Before search: last_accessed_at is NULL → scan into *string yields nil, no error.
 	var laBefore *string
 	if err := h.pool.QueryRow(ctx, `SELECT to_char(last_accessed_at, 'YYYY-MM-DD HH24:MI:SS') FROM memory_entities WHERE name='X'`).Scan(&laBefore); err != nil {
@@ -134,8 +138,12 @@ func TestReRankByConfidence(t *testing.T) {
 	ctx := context.Background()
 
 	// Two entities, both matching "alpha feature", different confidence.
-	h.mem.AddObservations(ctx, "rankproj", "High", []string{"alpha feature described"}, []float64{1.0})
-	h.mem.AddObservations(ctx, "rankproj", "Low", []string{"alpha feature described"}, []float64{0.1})
+	if err := h.mem.AddObservations(ctx, "rankproj", "High", []string{"alpha feature described"}, []float64{1.0}); err != nil {
+		t.Fatalf("add high: %v", err)
+	}
+	if err := h.mem.AddObservations(ctx, "rankproj", "Low", []string{"alpha feature described"}, []float64{0.1}); err != nil {
+		t.Fatalf("add low: %v", err)
+	}
 
 	results, err := h.mem.Search(ctx, "rankproj", "alpha feature", 10)
 	if err != nil {
@@ -155,9 +163,11 @@ func TestSearchScoreExposed(t *testing.T) {
 	defer h.close()
 	ctx := context.Background()
 
-	h.mem.CreateEntities(ctx, "scoreproj", []entity.EntityInput{
+	if _, err := h.mem.CreateEntities(ctx, "scoreproj", []entity.EntityInput{
 		{Name: "S", Type: "project", Observations: []string{"findable keyword"}},
-	})
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
 	results, err := h.mem.Search(ctx, "scoreproj", "findable", 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)

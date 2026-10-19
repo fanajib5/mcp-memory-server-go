@@ -19,15 +19,15 @@ func (r *postgresMemory) GetTopEntities(ctx context.Context, project string, lim
 		limit = 5
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, entity_type, avg_conf, (avg_conf * recency_factor) AS final_score
+		SELECT id, name, entity_type, project_id, avg_conf, (avg_conf * recency_factor) AS final_score
 		FROM (
-		  SELECT e.id, e.name, e.entity_type,
+		  SELECT e.id, e.name, e.entity_type, e.project_id,
 		         COALESCE(avg(COALESCE(o.confidence, 1.0)), 1.0) AS avg_conf,
 		         exp(-extract(epoch FROM (now() - coalesce(e.last_accessed_at, e.created_at))) / (30 * 86400.0)) AS recency_factor
 		  FROM memory_entities e
 		  LEFT JOIN memory_observations o ON o.entity_id = e.id
 		  WHERE e.project_id = $1
-		  GROUP BY e.id, e.name, e.entity_type, e.last_accessed_at, e.created_at
+		  GROUP BY e.id, e.name, e.entity_type, e.project_id, e.last_accessed_at, e.created_at
 		) agg
 		ORDER BY (avg_conf * recency_factor) DESC, id DESC
 		LIMIT $2`, project, limit)
@@ -39,7 +39,7 @@ func (r *postgresMemory) GetTopEntities(ctx context.Context, project string, lim
 	var found []searchRow
 	for rows.Next() {
 		var rr searchRow
-		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.avgConf, &rr.score); err != nil {
+		if err := rows.Scan(&rr.id, &rr.name, &rr.typ, &rr.project, &rr.avgConf, &rr.score); err != nil {
 			return nil, err
 		}
 		found = append(found, rr)

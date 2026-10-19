@@ -83,7 +83,7 @@ func (uc *ChatUseCase) SendMessage(ctx context.Context, project, sessionID, mess
 
 	tools := toolDefinitions()
 	maxTurns := 10
-	for turn := 0; turn < maxTurns; turn++ {
+	for range maxTurns {
 		resp, err := uc.llm.Chat(ctx, gateway.ChatRequest{
 			Model:    model,
 			Messages: messages,
@@ -118,7 +118,6 @@ func (uc *ChatUseCase) SendMessage(ctx context.Context, project, sessionID, mess
 		conv.LastAccessed = time.Now()
 		conv.mu.Unlock()
 
-		messages = nil
 		conv.mu.Lock()
 		messages = make([]gateway.ChatMessage, len(conv.Messages))
 		copy(messages, conv.Messages)

@@ -29,7 +29,9 @@ func (u *UI) HandleBackupExport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="memory-`+p+`.json"`)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (u *UI) HandleBackupImport(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +44,7 @@ func (u *UI) HandleBackupImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no file: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var payload entity.ExportPayload
 	if err := json.NewDecoder(file).Decode(&payload); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)

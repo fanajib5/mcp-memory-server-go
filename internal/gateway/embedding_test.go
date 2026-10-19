@@ -19,7 +19,7 @@ func TestOllamaClientEmbed(t *testing.T) {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"model":"test","embeddings":[[0.1,0.2],[0.3,0.4]]}`))
+		_, _ = w.Write([]byte(`{"model":"test","embeddings":[[0.1,0.2],[0.3,0.4]]}`))
 	}))
 	defer srv.Close()
 
@@ -50,7 +50,7 @@ func TestOllamaClientEmptyInput(t *testing.T) {
 func TestOllamaClientServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"model not found"}`))
+		_, _ = w.Write([]byte(`{"error":"model not found"}`))
 	}))
 	defer srv.Close()
 

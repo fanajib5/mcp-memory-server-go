@@ -73,7 +73,7 @@ func (s *OAuthService) HandleMetadata(w http.ResponseWriter, r *http.Request) {
 		TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post"},
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(metadata)
+	_ = json.NewEncoder(w).Encode(metadata)
 }
 
 func (s *OAuthService) HandleRegister(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +86,7 @@ func (s *OAuthService) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{
+	_, _ = w.Write([]byte(`{
 		"client_id": "` + clientID + `",
 		"client_secret": "` + clientSecret + `",
 		"grant_types": ["client_credentials"],

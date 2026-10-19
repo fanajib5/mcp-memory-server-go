@@ -135,28 +135,25 @@ func (u *MemoryUseCase) SessionBootstrap(ctx context.Context, in entity.SessionB
 		case activeName:
 			cp := &entity.Checkpoint{}
 			for _, obs := range ent.Observations {
-				if strings.HasPrefix(obs, "focus: ") {
-					cp.Focus = strings.TrimPrefix(obs, "focus: ")
-				} else if strings.HasPrefix(obs, "uncommitted: ") {
-					cp.Uncommitted = strings.TrimPrefix(obs, "uncommitted: ")
-				} else if strings.HasPrefix(obs, "blockers: ") {
-					cp.Blockers = strings.TrimPrefix(obs, "blockers: ")
-				} else if strings.HasPrefix(obs, "next_step: ") {
-					cp.NextStep = strings.TrimPrefix(obs, "next_step: ")
-				} else if strings.HasPrefix(obs, "source: ") {
-					cp.SavedBy = strings.TrimPrefix(obs, "source: ")
-				} else if strings.HasPrefix(obs, "saved_at: ") {
-					cp.SavedAt = strings.TrimPrefix(obs, "saved_at: ")
+				if after, ok := strings.CutPrefix(obs, "focus: "); ok {
+					cp.Focus = after
+				} else if after, ok := strings.CutPrefix(obs, "uncommitted: "); ok {
+					cp.Uncommitted = after
+				} else if after, ok := strings.CutPrefix(obs, "blockers: "); ok {
+					cp.Blockers = after
+				} else if after, ok := strings.CutPrefix(obs, "next_step: "); ok {
+					cp.NextStep = after
+				} else if after, ok := strings.CutPrefix(obs, "source: "); ok {
+					cp.SavedBy = after
+				} else if after, ok := strings.CutPrefix(obs, "saved_at: "); ok {
+					cp.SavedAt = after
 				}
 			}
 			result.Checkpoint = cp
 
 		case trailName:
 			total := len(ent.Observations)
-			count := total
-			if count > 20 {
-				count = 20
-			}
+			count := min(total, 20)
 			trail := make([]string, 0, count)
 			for i := total - 1; i >= total-count; i-- {
 				trail = append(trail, ent.Observations[i])

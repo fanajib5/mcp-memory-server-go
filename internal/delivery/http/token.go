@@ -13,7 +13,10 @@ import (
 )
 
 func (s *OAuthService) HandleToken(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
 	grantType := r.FormValue("grant_type")
 
 	if grantType == "authorization_code" {
@@ -90,5 +93,5 @@ func (s *OAuthService) issueToken(w http.ResponseWriter, subject, scope string) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"` + scope + `"}`))
+	_, _ = w.Write([]byte(`{"access_token":"` + tokenString + `","token_type":"Bearer","expires_in":3600,"scope":"` + scope + `"}`))
 }
