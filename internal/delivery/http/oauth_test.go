@@ -64,35 +64,69 @@ func TestHandleOAuthMetadata(t *testing.T) {
 func TestHandleRegister(t *testing.T) {
 	handler, _ := newOAuthTestEnv(t)
 
-	t.Run("success", func(t *testing.T) {
-		body := strings.NewReader("client_id=myclient&client_secret=mysecret")
-		req := httptest.NewRequest(http.MethodPost, "/oauth/register", body)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	register := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", w.Code)
+		return w
+	}
+
+	t.Run("generates credentials for confidential client", func(t *testing.T) {
+		w := register(`{"redirect_uris":["https://client.example/cb"],"client_name":"grok","grant_types":["authorization_code"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_post"}`)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201. body=%s", w.Code, w.Body.String())
 		}
 		var res map[string]any
 		if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if res["client_id"] != "myclient" {
-			t.Errorf("client_id = %q, want myclient", res["client_id"])
+		if res["client_id"] == "" || res["client_id"] == nil {
+			t.Fatal("client_id not generated")
 		}
-		if res["client_secret"] != "mysecret" {
-			t.Errorf("client_secret = %q, want mysecret", res["client_secret"])
+		if res["client_secret"] == "" || res["client_secret"] == nil {
+			t.Fatal("client_secret not generated")
+		}
+		if res["client_secret_expires_at"] != float64(0) {
+			t.Errorf("client_secret_expires_at = %v, want 0", res["client_secret_expires_at"])
+		}
+		if res["token_endpoint_auth_method"] != "client_secret_post" {
+			t.Errorf("token_endpoint_auth_method = %v, want client_secret_post", res["token_endpoint_auth_method"])
+		}
+		uris, _ := res["redirect_uris"].([]any)
+		if len(uris) != 1 || uris[0] != "https://client.example/cb" {
+			t.Errorf("redirect_uris = %v, want echo of request", res["redirect_uris"])
 		}
 	})
 
-	t.Run("missing credentials", func(t *testing.T) {
-		body := strings.NewReader("client_id=")
-		req := httptest.NewRequest(http.MethodPost, "/oauth/register", body)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, req)
+	t.Run("public client gets no secret", func(t *testing.T) {
+		w := register(`{"redirect_uris":["https://client.example/cb"],"client_name":"grok-public","token_endpoint_auth_method":"none"}`)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201. body=%s", w.Code, w.Body.String())
+		}
+		var res map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if res["client_id"] == "" || res["client_id"] == nil {
+			t.Fatal("client_id not generated")
+		}
+		if secret, _ := res["client_secret"].(string); secret != "" {
+			t.Errorf("client_secret = %q, want empty for public client", secret)
+		}
+	})
+
+	t.Run("missing redirect_uris rejected", func(t *testing.T) {
+		w := register(`{"client_name":"nourl"}`)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", w.Code)
+		}
+		var res map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if res["error"] != "invalid_client_metadata" {
+			t.Errorf("error = %v, want invalid_client_metadata", res["error"])
 		}
 	})
 }

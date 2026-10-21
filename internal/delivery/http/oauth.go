@@ -7,6 +7,7 @@ package http
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -20,11 +21,13 @@ import (
 )
 
 type AuthCode struct {
-	Code        string
-	ClientID    string
-	RedirectURI string
-	ExpiresAt   time.Time
-	Scope       string
+	Code                string
+	ClientID            string
+	RedirectURI         string
+	ExpiresAt           time.Time
+	Scope               string
+	CodeChallenge       string
+	CodeChallengeMethod string
 }
 
 type Claims struct {
@@ -53,15 +56,48 @@ type ProtectedResourceMetadata struct {
 	ResourceName           string   `json:"resource_name,omitempty"`
 }
 
+// RegisteredClient is a client created via RFC 7591 dynamic client registration.
+type RegisteredClient struct {
+	ClientID                string
+	ClientSecret            string
+	RedirectURIs            []string
+	TokenEndpointAuthMethod string
+}
+
+type registrationRequest struct {
+	RedirectURIs            []string `json:"redirect_uris"`
+	ClientName              string   `json:"client_name,omitempty"`
+	GrantTypes              []string `json:"grant_types,omitempty"`
+	ResponseTypes           []string `json:"response_types,omitempty"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method,omitempty"`
+}
+
+type registrationResponse struct {
+	ClientID                string   `json:"client_id"`
+	ClientSecret            string   `json:"client_secret,omitempty"`
+	ClientIDIssuedAt        int64    `json:"client_id_issued_at"`
+	ClientSecretExpiresAt   int64    `json:"client_secret_expires_at"`
+	RedirectURIs            []string `json:"redirect_uris"`
+	ClientName              string   `json:"client_name,omitempty"`
+	GrantTypes              []string `json:"grant_types"`
+	ResponseTypes           []string `json:"response_types"`
+	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+}
+
 // OAuthService issues authorization codes and JWT access tokens for MCP clients.
 type OAuthService struct {
-	cfg   *config.Config
-	codes map[string]*AuthCode
-	mu    sync.Mutex
+	cfg     *config.Config
+	codes   map[string]*AuthCode
+	clients map[string]*RegisteredClient
+	mu      sync.Mutex
 }
 
 func NewOAuthService(cfg *config.Config) *OAuthService {
-	return &OAuthService{cfg: cfg, codes: make(map[string]*AuthCode)}
+	return &OAuthService{
+		cfg:     cfg,
+		codes:   make(map[string]*AuthCode),
+		clients: make(map[string]*RegisteredClient),
+	}
 }
 
 func randomState(n int) string {
@@ -80,7 +116,7 @@ func (s *OAuthService) HandleMetadata(w http.ResponseWriter, r *http.Request) {
 		ScopesSupported:          []string{"mcp"},
 		ResponseTypesSupported:   []string{"code"},
 		GrantTypesSupported:      []string{"authorization_code", "client_credentials"},
-		TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post"},
+		TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post", "none"},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(metadata)
@@ -107,22 +143,65 @@ func (s *OAuthService) HandleProtectedResourceMetadata(w http.ResponseWriter, r 
 	_ = json.NewEncoder(w).Encode(metadata)
 }
 
+// HandleRegister implements RFC 7591 dynamic client registration: the client
+// posts metadata and the server generates the credentials.
 func (s *OAuthService) HandleRegister(w http.ResponseWriter, r *http.Request) {
-	clientID := r.FormValue("client_id")
-	clientSecret := r.FormValue("client_secret")
-
-	if clientID == "" || clientSecret == "" {
-		http.Error(w, "Missing client_id or client_secret", http.StatusBadRequest)
+	var req registrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid_client_metadata"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.RedirectURIs) == 0 {
+		http.Error(w, `{"error":"invalid_client_metadata"}`, http.StatusBadRequest)
+		return
+	}
+	method := req.TokenEndpointAuthMethod
+	if method == "" {
+		method = "client_secret_basic"
+	}
+	switch method {
+	case "client_secret_basic", "client_secret_post", "none":
+	default:
+		http.Error(w, `{"error":"invalid_client_metadata"}`, http.StatusBadRequest)
 		return
 	}
 
+	client := &RegisteredClient{
+		ClientID:                "mcp-" + randomState(16),
+		RedirectURIs:            req.RedirectURIs,
+		TokenEndpointAuthMethod: method,
+	}
+	if method != "none" {
+		client.ClientSecret = randomState(32)
+	}
+
+	grantTypes := req.GrantTypes
+	if len(grantTypes) == 0 {
+		grantTypes = []string{"authorization_code"}
+	}
+	responseTypes := req.ResponseTypes
+	if len(responseTypes) == 0 {
+		responseTypes = []string{"code"}
+	}
+
+	s.mu.Lock()
+	s.clients[client.ClientID] = client
+	s.mu.Unlock()
+
+	resp := registrationResponse{
+		ClientID:                client.ClientID,
+		ClientSecret:            client.ClientSecret,
+		ClientIDIssuedAt:        time.Now().Unix(),
+		ClientSecretExpiresAt:   0,
+		RedirectURIs:            req.RedirectURIs,
+		ClientName:              req.ClientName,
+		GrantTypes:              grantTypes,
+		ResponseTypes:           responseTypes,
+		TokenEndpointAuthMethod: method,
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{
-		"client_id": "` + clientID + `",
-		"client_secret": "` + clientSecret + `",
-		"grant_types": ["client_credentials"],
-		"token_endpoint_auth_method": "client_secret_post"
-	}`))
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func parseBasicAuth(header string) (clientID, clientSecret string) {
@@ -134,4 +213,49 @@ func parseBasicAuth(header string) (clientID, clientSecret string) {
 		}
 	}
 	return "", ""
+}
+
+// resolveClient looks up a dynamically registered client, falling back to the
+// built-in client from config (any redirect URI allowed for that one).
+func (s *OAuthService) resolveClient(clientID string) *RegisteredClient {
+	if clientID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	registered, ok := s.clients[clientID]
+	s.mu.Unlock()
+	if ok {
+		return registered
+	}
+	if clientID == s.cfg.OAuthClientID {
+		return &RegisteredClient{
+			ClientID:                s.cfg.OAuthClientID,
+			ClientSecret:            s.cfg.OAuthClientSecret,
+			TokenEndpointAuthMethod: "client_secret_post",
+		}
+	}
+	return nil
+}
+
+func clientSecretMatches(client *RegisteredClient, clientSecret string) bool {
+	if client.TokenEndpointAuthMethod == "none" {
+		return true
+	}
+	return clientSecret != "" && clientSecret == client.ClientSecret
+}
+
+func verifyPKCE(stored *AuthCode, verifier string) bool {
+	if stored.CodeChallenge == "" {
+		return true
+	}
+	if verifier == "" {
+		return false
+	}
+	switch stored.CodeChallengeMethod {
+	case "S256":
+		sum := sha256.Sum256([]byte(verifier))
+		return base64.RawURLEncoding.EncodeToString(sum[:]) == stored.CodeChallenge
+	default:
+		return verifier == stored.CodeChallenge
+	}
 }

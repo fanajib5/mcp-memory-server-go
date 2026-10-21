@@ -51,8 +51,14 @@ func (s *OAuthService) tokenFromAuthCode(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 		return
 	}
-	if clientID != s.cfg.OAuthClientID || clientSecret != s.cfg.OAuthClientSecret {
+
+	client := s.resolveClient(clientID)
+	if client == nil || !clientSecretMatches(client, clientSecret) || stored.ClientID != clientID {
 		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+		return
+	}
+	if !verifyPKCE(stored, r.FormValue("code_verifier")) {
+		http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 		return
 	}
 
