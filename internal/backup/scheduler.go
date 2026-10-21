@@ -1,7 +1,7 @@
 // mcp-memory-server-go - Personal Knowledge Graph MCP Server
 // Copyright (C) 2026  Faiq Najib
 //
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // Package backup handles scheduled auto-backup of the memory database to JSON
 // files on a Docker volume. Coolify (or any external tool) then syncs the
