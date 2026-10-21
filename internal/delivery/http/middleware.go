@@ -69,8 +69,10 @@ func authMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 		expected = []byte("Bearer " + cfg.APIToken)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		challenge := fmt.Sprintf(`Bearer resource_metadata="%s/.well-known/oauth-protected-resource%s"`, cfg.PublicURL, r.URL.Path)
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
+			w.Header().Set("WWW-Authenticate", challenge)
 			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -86,6 +88,7 @@ func authMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		w.Header().Set("WWW-Authenticate", challenge)
 		http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
 	})
 }

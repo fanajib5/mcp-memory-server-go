@@ -20,6 +20,8 @@ func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService,
 	mux.Handle("/mcp", authMiddleware(cfg, mcpHandler))
 	mux.Handle("/events", authMiddleware(cfg, sse))
 	mux.HandleFunc("/.well-known/oauth-authorization-server", oauth.HandleMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource", oauth.HandleProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/", oauth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/oauth/authorize", oauth.HandleAuthorize)
 	mux.HandleFunc("/oauth/token", oauth.HandleToken)
 	mux.HandleFunc("/oauth/register", oauth.HandleRegister)

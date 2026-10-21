@@ -43,6 +43,16 @@ type OAuthMetadata struct {
 	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 }
 
+// ProtectedResourceMetadata is the RFC 9728 document describing this resource
+// server so OAuth clients can locate the authorization server.
+type ProtectedResourceMetadata struct {
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	ScopesSupported        []string `json:"scopes_supported,omitempty"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported,omitempty"`
+	ResourceName           string   `json:"resource_name,omitempty"`
+}
+
 // OAuthService issues authorization codes and JWT access tokens for MCP clients.
 type OAuthService struct {
 	cfg   *config.Config
@@ -71,6 +81,27 @@ func (s *OAuthService) HandleMetadata(w http.ResponseWriter, r *http.Request) {
 		ResponseTypesSupported:   []string{"code"},
 		GrantTypesSupported:      []string{"authorization_code", "client_credentials"},
 		TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post"},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(metadata)
+}
+
+// HandleProtectedResourceMetadata serves RFC 9728 protected resource metadata,
+// both at the root well-known URI and path-aware (RFC 9728 section 3.1): a
+// request for /.well-known/oauth-protected-resource/mcp advertises resource
+// PublicURL + "/mcp" so it matches the URL the client called.
+func (s *OAuthService) HandleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	const prefix = "/.well-known/oauth-protected-resource"
+	suffix := strings.TrimPrefix(r.URL.Path, prefix)
+	if suffix == "" || suffix == "/" {
+		suffix = "/mcp"
+	}
+	metadata := ProtectedResourceMetadata{
+		Resource:               s.cfg.PublicURL + suffix,
+		AuthorizationServers:   []string{s.cfg.PublicURL},
+		ScopesSupported:        []string{"mcp"},
+		BearerMethodsSupported: []string{"header"},
+		ResourceName:           "mcp-memory-server",
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(metadata)
