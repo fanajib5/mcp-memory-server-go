@@ -33,17 +33,19 @@ type AuthCode struct {
 type Claims struct {
 	jwt.RegisteredClaims
 	Scope string `json:"scope,omitempty"`
+	Use   string `json:"use,omitempty"`
 }
 
 type OAuthMetadata struct {
-	Issuer                   string   `json:"issuer"`
-	AuthorizationEndpoint    string   `json:"authorization_endpoint"`
-	TokenEndpoint            string   `json:"token_endpoint"`
-	RegistrationEndpoint     string   `json:"registration_endpoint,omitempty"`
-	ScopesSupported          []string `json:"scopes_supported"`
-	ResponseTypesSupported   []string `json:"response_types_supported"`
-	GrantTypesSupported      []string `json:"grant_types_supported,omitempty"`
-	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	Issuer                        string   `json:"issuer"`
+	AuthorizationEndpoint         string   `json:"authorization_endpoint"`
+	TokenEndpoint                 string   `json:"token_endpoint"`
+	RegistrationEndpoint          string   `json:"registration_endpoint,omitempty"`
+	ScopesSupported               []string `json:"scopes_supported"`
+	ResponseTypesSupported        []string `json:"response_types_supported"`
+	GrantTypesSupported           []string `json:"grant_types_supported,omitempty"`
+	TokenEndpointAuthMethods      []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	CodeChallengeMethodsSupported []string `json:"code_challenge_methods_supported,omitempty"`
 }
 
 // ProtectedResourceMetadata is the RFC 9728 document describing this resource
@@ -109,14 +111,15 @@ func randomState(n int) string {
 func (s *OAuthService) HandleMetadata(w http.ResponseWriter, r *http.Request) {
 	baseURL := s.cfg.PublicURL
 	metadata := OAuthMetadata{
-		Issuer:                   baseURL,
-		AuthorizationEndpoint:    baseURL + "/oauth/authorize",
-		TokenEndpoint:            baseURL + "/oauth/token",
-		RegistrationEndpoint:     baseURL + "/oauth/register",
-		ScopesSupported:          []string{"mcp"},
-		ResponseTypesSupported:   []string{"code"},
-		GrantTypesSupported:      []string{"authorization_code", "client_credentials"},
-		TokenEndpointAuthMethods: []string{"client_secret_basic", "client_secret_post", "none"},
+		Issuer:                        baseURL,
+		AuthorizationEndpoint:         baseURL + "/oauth/authorize",
+		TokenEndpoint:                 baseURL + "/oauth/token",
+		RegistrationEndpoint:          baseURL + "/oauth/register",
+		ScopesSupported:               []string{"mcp"},
+		ResponseTypesSupported:        []string{"code"},
+		GrantTypesSupported:           []string{"authorization_code", "client_credentials", "refresh_token"},
+		TokenEndpointAuthMethods:      []string{"client_secret_basic", "client_secret_post", "none"},
+		CodeChallengeMethodsSupported: []string{"S256", "plain"},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(metadata)

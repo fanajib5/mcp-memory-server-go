@@ -84,7 +84,7 @@ func authMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 		claims := &Claims{}
 		if _, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
 			return []byte(cfg.JWTSecret), nil
-		}); err == nil {
+		}); err == nil && claims.Use != tokenUseRefresh {
 			next.ServeHTTP(w, r)
 			return
 		}

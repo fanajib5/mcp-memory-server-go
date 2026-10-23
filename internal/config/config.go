@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -23,6 +24,8 @@ type Config struct {
 	OAuthClientID      string
 	OAuthClientSecret  string
 	JWTSecret          string
+	AccessTokenTTL     time.Duration // OAUTH_ACCESS_TOKEN_TTL (seconds), default 24h
+	RefreshTokenTTL    time.Duration // OAUTH_REFRESH_TOKEN_TTL (seconds), default 30d
 	UIPassword         string
 	CookieInsecure     bool
 	PublicURL          string
@@ -70,6 +73,19 @@ func Load() *Config {
 	}
 	if jwtSecret == "" {
 		log.Fatal("FATAL: JWT_SECRET env var is required")
+	}
+
+	accessTTL := 24 * time.Hour
+	if v := os.Getenv("OAUTH_ACCESS_TOKEN_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			accessTTL = time.Duration(n) * time.Second
+		}
+	}
+	refreshTTL := 30 * 24 * time.Hour
+	if v := os.Getenv("OAUTH_REFRESH_TOKEN_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			refreshTTL = time.Duration(n) * time.Second
+		}
 	}
 
 	uiPassword := os.Getenv("UI_PASSWORD")
@@ -138,6 +154,8 @@ func Load() *Config {
 		OAuthClientID:      oauthClientID,
 		OAuthClientSecret:  oauthClientSecret,
 		JWTSecret:          jwtSecret,
+		AccessTokenTTL:     accessTTL,
+		RefreshTokenTTL:    refreshTTL,
 		UIPassword:         uiPassword,
 		CookieInsecure:     os.Getenv("UI_COOKIE_INSECURE") == "true",
 		PublicURL:          publicURL,
