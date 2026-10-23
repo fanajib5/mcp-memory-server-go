@@ -22,7 +22,9 @@ func NewRouter(cfg *config.Config, mcpHandler http.Handler, oauth *OAuthService,
 	mux.HandleFunc("/.well-known/oauth-authorization-server", oauth.HandleMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource", oauth.HandleProtectedResourceMetadata)
 	mux.HandleFunc("/.well-known/oauth-protected-resource/", oauth.HandleProtectedResourceMetadata)
-	mux.HandleFunc("/oauth/authorize", oauth.HandleAuthorize)
+	// OAuth authorize is gated by the UI session: without a login cookie the
+	// user is sent to /ui/login?next=... and returned here after authenticating.
+	mux.Handle("/oauth/authorize", ui.Session.Auth(oauth.HandleAuthorize))
 	mux.HandleFunc("/oauth/token", oauth.HandleToken)
 	mux.HandleFunc("/oauth/register", oauth.HandleRegister)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

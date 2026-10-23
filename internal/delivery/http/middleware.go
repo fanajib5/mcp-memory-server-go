@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -132,7 +133,7 @@ func (s *Session) SessionAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookieName)
 		if err != nil || !s.verifyCookieValue(c.Value) {
-			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+			http.Redirect(w, r, "/ui/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
 		next.ServeHTTP(w, r)

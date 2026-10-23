@@ -12,9 +12,22 @@ import (
 	"time"
 )
 
+// safeNext validates a post-login return path: relative site paths only,
+// rejecting absolute URLs, protocol-relative URLs, and header-injection bytes.
+func safeNext(v string) string {
+	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.ContainsAny(v, "\\\r\n") {
+		return "/ui"
+	}
+	return v
+}
+
 func (u *UI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		render(w, u.Tmpl, "login", map[string]any{"Error": ""})
+		data := map[string]any{"Error": ""}
+		if next := safeNext(r.URL.Query().Get("next")); next != "/ui" {
+			data["Next"] = next
+		}
+		render(w, u.Tmpl, "login", data)
 		return
 	}
 	_ = r.ParseForm()
@@ -27,7 +40,7 @@ func (u *UI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(time.Duration(sessionMaxAge) * time.Second).Unix()
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: u.Session.signCookieValue(exp),
-		Path: "/ui", MaxAge: sessionMaxAge,
+		Path: "/", MaxAge: sessionMaxAge,
 		HttpOnly: true, Secure: !u.Cfg.CookieInsecure, SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -35,12 +48,12 @@ func (u *UI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Path: "/ui", MaxAge: sessionMaxAge,
 		HttpOnly: true, Secure: !u.Cfg.CookieInsecure, SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, "/ui", http.StatusSeeOther)
+	http.Redirect(w, r, safeNext(r.FormValue("next")), http.StatusSeeOther)
 }
 
 func (u *UI) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookieName, Value: "", Path: "/ui", MaxAge: -1,
+		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: !u.Cfg.CookieInsecure, SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{

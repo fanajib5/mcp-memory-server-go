@@ -126,15 +126,46 @@ ditolak, TTL configurable end-to-end via `config.Load`.
 
 Verifikasi: `go test ./...`, `gofmt -l`, `go vet`, `go build` bersih.
 
+## Addendum 2026-10-23: login gate /oauth/authorize (fix security gap)
+
+Gap terkonfirmasi live sebelum fix (rantai tanpa kredensial apa pun):
+`POST /oauth/register` 201 → `GET /oauth/authorize` 302 + code (auto-approve)
+→ `POST /oauth/token` 200 JWT → `POST /mcp` 200 = akses penuh graph. Route
+`/` dan `/ui/*` memang ter-gate (`ui.Session.Auth`), tapi `/oauth/*` dipasang
+polos. DCR tetap terbuka (wajib: connector Claude/Grok melakukan DCR
+otomatis tanpa initial token); titik bahayanya auto-approve, dan itu yang
+digate.
+
+Design fix (Faiq pilih: login gate via UI session):
+
+- `routes.go`: `/oauth/authorize` dibungkus `ui.Session.Auth` — tanpa cookie
+  session valid, redirect `303 /ui/login?next=<RequestURI>` lalu kembali ke
+  authorize setelah login (dance OAuth selesai di attempt pertama).
+- `SessionAuth`: redirect kini membawa `?next=` (berlaku juga untuk route
+  `/ui/*` — bonus deep-link setelah login).
+- `HandleLogin`: `next` divalidasi `safeNext` — hanya path relatif
+  (`/...`), menolak `//...`, URL absolut, `\`, `\r\n` (open-redirect +
+  header-injection guard). Default `/ui`.
+- Cookie `mem_session` `Path` `/ui` → `/` — **wajib**, karena browser tidak
+  mengirim cookie ber-path `/ui` ke `/oauth/authorize`. Konsekuensi: user
+  yang sudah login sebelum deploy harus login ulang sekali (cookie lama
+  scoped `/ui`). `SameSite=Lax` tetap benar: authorize dibuka sebagai
+  top-level GET navigation dari popup OAuth client, cookie ikut terkirim.
+- Cookie `mem_csrf` tetap `/ui` (hanya dipakai form UI).
+- Gate butuh `UI_PASSWORD` — `config.Load` fallback ke `MEMORY_API_TOKEN`
+  yang selalu ada, jadi fail-closed tanpa mematikan jalur OAuth.
+
+Test: `authorize_gate_test.go` (TDD RED→GREEN) — tanpa login redirect
+`?next=`, dengan login code terbit, `next` dihormati/ditolak (4 kasus
+evil), cookie path `/`.
+
 ## Follow-up (belum diimplementasi)
 
-1. **Security gap (prioritas):** `/oauth/authorize` auto-approve tanpa
-   autentikasi user + DCR terbuka tanpa initial access token = siapa pun
-   yang menemukan endpoint bisa dapat JWT akses penuh ke knowledge graph.
-   Rekomendasi: gate authorize dengan login UI (`Session`) atau wajibkan
-   initial access token untuk DCR.
+1. ~~Security gap `/oauth/authorize`~~ — **FIXED** (lihat addendum di atas).
 2. Opsi B (DB-backed refresh + rotasi + revoke) jika kelak butuh revocation
    atau multi-user.
 3. Jika Claude Web masih tidak memanggil refresh (bug klien #228), fallback:
    perpanjang `OAUTH_ACCESS_TOKEN_TTL` (mis. 30 hari) — mitigation, bukan fix
    root cause.
+4. Opsional: halaman consent (nama client + Allow/Deny) saat authorize —
+   saat ini login = persetujuan implicit.
